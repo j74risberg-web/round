@@ -315,7 +315,7 @@ export default function Home() {
     window.setTimeout(beginCountdown, 3500);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
-  const duckForSignal = () => { const music = audioRef.current; if (!music) return; const prev = music.volume; music.volume = Math.min(prev, 0.06); window.setTimeout(() => { music.volume = prev; }, 1500); }; const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
+  const duckForSignal = () => { const music = audioRef.current; if (!music) return; const prev = music.volume; music.volume = Math.min(prev, 0.03); window.setTimeout(() => { music.volume = prev; }, 2200); }; const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
   const playGong = () => { duckForSignal(); const source = gongRef.current; if (!source) return; const gong = source.cloneNode(true) as HTMLAudioElement; gong.volume = 1; gong.currentTime = 0; gong.play().catch(() => { source.currentTime = 0; source.volume = 1; source.play().catch(() => {}); }); };
   const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
     if (!exercise) { onComplete?.(); return; }
@@ -435,7 +435,7 @@ export default function Home() {
     if (!resting && current.exercise.rest > 0) {
       setResting(true);
       setSecondsLeft(current.exercise.rest);
-      window.setTimeout(() => playAnnouncement(upcoming.exercise), 850);
+      window.setTimeout(() => playAnnouncement(upcoming.exercise), 1400);
       return;
     }
 
