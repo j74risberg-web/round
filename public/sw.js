@@ -1,4 +1,4 @@
-const CACHE_VERSION = "round-v4";
+const CACHE_VERSION = "round-v6";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -8,16 +8,23 @@ const APP_SHELL = [
   "/icons/icon-192-maskable.png",
   "/icons/icon-512-maskable.png",
   "/icons/apple-touch-icon.png",
-  "/exercises/squat.webp",
-  "/exercises/pushup.webp",
-  "/exercises/plank.webp",
-  "/exercises/lunge.webp",
-  "/exercises/situp.webp",
+  "/exercises/knaboj.webp",
+  "/exercises/armhavningar.webp",
+  "/exercises/plankan.webp",
+  "/exercises/utfall.webp",
+  "/exercises/situps.webp",
+  "/exercises/enbensbalans.jpeg",
+  "/exercises/axlar.jpeg",
+  "/exercises/superman.jpeg",
+  "/exercises/bird-dog.jpeg",
+  "/exercises/dead-bug.jpeg",
+  "/exercises/rygglyft.jpg",
+  "/exercises/liggande-benlyft.jpeg",
+  "/exercises/tricepscurl.jpeg",
+  "/exercises/bicepscurl.jpeg",
+  "/exercises/upphopp.jpeg",
   "/exercises/rest.webp",
   "/sounds/boxing-round-double.mp3",
-  "/music/energi.mp3",
-  "/music/driv.mp3",
-  "/music/fokus.mp3",
 ];
 
 self.addEventListener("install", (event) => {

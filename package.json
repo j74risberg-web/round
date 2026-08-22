@@ -10,7 +10,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "predev": "node scripts/generate-music-library.mjs",
+    "prebuild": "node scripts/generate-music-library.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",

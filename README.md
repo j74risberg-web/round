@@ -1,9 +1,7 @@
 # Träningsrundan (ROUND)
 
-En Next.js-app för intervallträning med egna övningar, rundor, timer, musik
-och röstmeddelanden. All data (övningar, rundor, egen musik, egna
-röstinspelningar) sparas lokalt i webbläsaren (`localStorage` + `IndexedDB`) –
-appen har ingen backend eller databas.
+En Next.js-app för intervallträning med övningsbibliotek, rundor, timer, återanvändbart musikbibliotek
+och röstmeddelanden. Övningar, rundor och musikbibliotek synkas via appens Vercel Blob-backend med synkkod och sparas även lokalt som säkerhetskopia. Uppladdade ljudfiler lagras i Vercel Blob.
 
 ## Utveckling
 
@@ -43,3 +41,7 @@ vercel
 
 `public/sounds/boxing-round-double.mp3` är ett redigerat utdrag av "Boxing
 bell #1" av Joseph SARDIN (BigSoundBank, CC0). Se `public/sounds/LICENSE.txt`.
+
+
+## Rundpaus
+Mellan olika rundor används en automatisk rundpaus på 30 sekunder. Under rundpausen kan användaren välja **Starta nu**. De sista fem sekunderna räknas ned med standardrösten (om Röstmeddelanden är aktiverat), följt av pling när nästa runda startar.
