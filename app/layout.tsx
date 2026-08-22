@@ -2,6 +2,12 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import RegisterServiceWorker from "./register-sw";
 
+// Force every page under this layout to be rendered per-request rather than
+// served from Vercel's shared static/edge cache. This site sits behind a PIN
+// gate enforced in middleware — a cached response would otherwise be replayed
+// to visitors regardless of whether they have a valid access cookie.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "ROUND",
   description: "Intervallträning med egna rundor, timer, musik och röstmeddelanden.",
