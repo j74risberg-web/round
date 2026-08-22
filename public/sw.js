@@ -1,4 +1,4 @@
-const CACHE_VERSION = "round-v2";
+const CACHE_VERSION = "round-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -42,6 +42,10 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // API calls must always hit the network fresh — never cache these (they carry
+  // the synced state and would otherwise serve stale "not found" responses forever).
+  if (url.pathname.startsWith("/api/")) return;
 
   // Navigation requests: network-first, fall back to cached app shell when offline.
   if (request.mode === "navigate") {
