@@ -5,6 +5,10 @@ function isValidCode(code: string | null): code is string {
   return !!code && /^[A-Z0-9]{4,12}$/.test(code);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   if (!isValidCode(code)) {
@@ -12,13 +16,16 @@ export async function GET(request: NextRequest) {
   }
 
   const pathname = `sync/${code}/state.json`;
-  const { blobs } = await list({ prefix: pathname, limit: 5 });
 
-  if (request.nextUrl.searchParams.get("debug") === "1") {
-    return NextResponse.json({ pathname, blobs });
+  // list() can lag briefly right after a put() due to eventual consistency,
+  // so retry a couple of times before concluding there's really nothing there.
+  let match;
+  for (let attempt = 0; attempt < 3 && !match; attempt++) {
+    if (attempt > 0) await sleep(300);
+    const { blobs } = await list({ prefix: pathname, limit: 5 });
+    match = blobs.find((blob) => blob.pathname === pathname);
   }
 
-  const match = blobs.find((blob) => blob.pathname === pathname);
   if (!match) {
     return NextResponse.json({ found: false });
   }
