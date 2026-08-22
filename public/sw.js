@@ -1,4 +1,4 @@
-const CACHE_VERSION = "round-v3";
+const CACHE_VERSION = "round-v4";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -52,8 +52,11 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put("/", copy)).catch(() => {});
+          // Don't cache redirected responses (e.g. the PIN gate) under the "/" key.
+          if (!response.redirected && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put("/", copy)).catch(() => {});
+          }
           return response;
         })
         .catch(() => caches.match("/")),
