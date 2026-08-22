@@ -310,7 +310,7 @@ export default function Home() {
     const beginCountdown = () => {
       if (countdownStarted) return;
       countdownStarted = true;
-      setPreStartCount(5);
+      window.setTimeout(() => setPreStartCount(5), 700);
     };
     window.setTimeout(beginCountdown, 3500);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
