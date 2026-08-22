@@ -12,7 +12,12 @@ export async function GET(request: NextRequest) {
   }
 
   const pathname = `sync/${code}/state.json`;
-  const { blobs } = await list({ prefix: pathname, limit: 1 });
+  const { blobs } = await list({ prefix: pathname, limit: 5 });
+
+  if (request.nextUrl.searchParams.get("debug") === "1") {
+    return NextResponse.json({ pathname, blobs });
+  }
+
   const match = blobs.find((blob) => blob.pathname === pathname);
   if (!match) {
     return NextResponse.json({ found: false });
