@@ -29,6 +29,8 @@ function shuffle<T>(items: T[]) {
 const audioDbName = "traningsrundan-audio";
 const audioStoreName = "exercise-music";
 const voiceStoreName = "exercise-voice";
+const PASS_MUSIC_ID = "pass-default";
+const builtInMusicByName: Record<string, string> = { Energi: "/music/energi.mp3", Driv: "/music/driv.mp3", Fokus: "/music/fokus.mp3" };
 function openAudioDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(audioDbName, 2);
@@ -99,9 +101,31 @@ export default function Home() {
   // Intentional: hydrates client-only localStorage data after mount so the
   // server-rendered markup (no localStorage access) matches the client's first
   // paint and avoids a hydration mismatch.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { const saved = localStorage.getItem("traningsrundan-v1"); if (saved) try { const data = JSON.parse(saved); if (data.exercises?.length) setExercises(data.exercises.map((exercise: Exercise) => ({ ...exercise, image: exercise.image?.startsWith("data:") ? exercise.image : starterExercises.find(item => item.id === exercise.id)?.image || exercise.image }))); if (data.rounds?.length) setRounds(data.rounds); } catch {} }, []);
-  useEffect(() => { localStorage.setItem("traningsrundan-v1", JSON.stringify({ exercises, rounds })); }, [exercises, rounds]);
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    const saved = localStorage.getItem("traningsrundan-v1");
+    if (saved) try {
+      const data = JSON.parse(saved);
+      if (data.exercises?.length) setExercises(data.exercises.map((exercise: Exercise) => ({ ...exercise, image: exercise.image?.startsWith("data:") ? exercise.image : starterExercises.find(item => item.id === exercise.id)?.image || exercise.image })));
+      if (data.rounds?.length) setRounds(data.rounds);
+      if (data.passMusicName) {
+        const name = data.passMusicName as string;
+        if (builtInMusicByName[name]) { setPassMusicName(name); setPassMusicUrl(builtInMusicByName[name]); }
+        else if (name === "Ingen musik") { setPassMusicName(name); setPassMusicUrl(null); }
+        else {
+          // Custom uploaded track: restore the actual audio file from IndexedDB.
+          loadStoredAudio(audioStoreName, PASS_MUSIC_ID).then(blob => {
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            setPassMusicName(name);
+            setPassMusicUrl(url);
+          }).catch(() => {});
+        }
+      }
+    } catch {}
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+  useEffect(() => { localStorage.setItem("traningsrundan-v1", JSON.stringify({ exercises, rounds, passMusicName })); }, [exercises, rounds, passMusicName]);
   useEffect(() => {
     exercises.filter(exercise => exercise.music === "custom" && !customMusicUrlsRef.current[exercise.id]).forEach(async exercise => {
       try {
@@ -147,7 +171,13 @@ export default function Home() {
 
   const addExercise = () => { const name = newName.trim(); if (!name) return; const i = exercises.length % colors.length; setExercises([...exercises, { id: crypto.randomUUID(), name, seconds: 30, rest: 15, color: colors[i], emoji: emojis[i] }]); setNewName(""); };
   const moveExercise = (round: Round, index: number, direction: -1 | 1) => { const target = index + direction; if (target < 0 || target >= round.exerciseIds.length) return; const ids = [...round.exerciseIds]; [ids[index], ids[target]] = [ids[target], ids[index]]; updateRound(round.id, { exerciseIds: ids }); };
-  const selectMusic = (file?: File) => { if (!file) return; if (passMusicUrl?.startsWith("blob:")) URL.revokeObjectURL(passMusicUrl); setPassMusicUrl(URL.createObjectURL(file)); setPassMusicName(file.name); };
+  const selectMusic = (file?: File) => {
+    if (!file) return;
+    if (passMusicUrl?.startsWith("blob:")) URL.revokeObjectURL(passMusicUrl);
+    setPassMusicUrl(URL.createObjectURL(file));
+    setPassMusicName(file.name);
+    saveStoredAudio(audioStoreName, PASS_MUSIC_ID, file).catch(() => { window.alert("Musikfilen kunde inte sparas permanent på den här enheten, men fungerar under den här sessionen."); });
+  };
   const selectBuiltInMusic = (name: string, url: string) => { if (passMusicUrl?.startsWith("blob:")) URL.revokeObjectURL(passMusicUrl); setPassMusicName(name); setPassMusicUrl(url); };
   const selectImage = (exerciseId: string, file?: File) => { if (!file) return; const reader = new FileReader(); reader.onload = () => { const img = new Image(); img.onload = () => { const canvas = document.createElement("canvas"); const size = 420; canvas.width = size; canvas.height = size; const ctx = canvas.getContext("2d"); if (!ctx) return; const scale = Math.max(size / img.width, size / img.height); const w = img.width * scale, h = img.height * scale; ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h); updateExercise(exerciseId, { image: canvas.toDataURL("image/jpeg", .76) }); }; img.src = String(reader.result); }; reader.readAsDataURL(file); };
   const selectExerciseMusic = async (exerciseId: string, file?: File) => {
