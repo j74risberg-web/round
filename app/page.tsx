@@ -382,15 +382,8 @@ export default function Home() {
   };
 
   const announceRoundPause = (currentStep: Step, upcoming: Step) => {
-    if (!voiceEnabled || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(`${currentStep.roundName} klar. Nästa är ${upcoming.roundName}. Första övningen är ${upcoming.exercise.name}.`);
-    utterance.lang = "sv-SE";
-    utterance.rate = .95;
-    const voice = window.speechSynthesis.getVoices().find(item => item.lang.toLowerCase().startsWith("sv"));
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.resume();
-    window.speechSynthesis.speak(utterance);
+        if (!voiceEnabled) return;
+        speakCloud(`${currentStep.roundName} klar. Nästa är ${upcoming.roundName}. Första övningen är ${upcoming.exercise.name}.`);
   };
 
   const advance = () => {
@@ -433,17 +426,10 @@ export default function Home() {
   // och startar varken arbetstid eller musik förrän hela 5–4–3–2–1 är klar.
   useEffect(() => {
     if (!running || !preStarting || preStartCount <= 0) return;
-    if (voiceEnabled && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
-      const utterance = new SpeechSynthesisUtterance(words[preStartCount] ?? String(preStartCount));
-      utterance.lang = "sv-SE";
-      utterance.rate = .92;
-      const voice = window.speechSynthesis.getVoices().find(item => item.lang.toLowerCase().startsWith("sv"));
-      if (voice) utterance.voice = voice;
-      window.speechSynthesis.resume();
-      window.speechSynthesis.speak(utterance);
-    }
+        if (voiceEnabled) {
+                const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
+                speakCloud(words[preStartCount] ?? String(preStartCount));
+        }
     const id = window.setTimeout(() => {
       if (preStartCount > 1) {
         setPreStartCount(value => value - 1);
@@ -463,16 +449,9 @@ export default function Home() {
 
   // Under rundpausen räknas de sista fem sekunderna upp med standardrösten.
   useEffect(() => {
-    if (!running || paused || !roundPausing || secondsLeft < 1 || secondsLeft > 5 || !voiceEnabled || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
-    const utterance = new SpeechSynthesisUtterance(words[secondsLeft] ?? String(secondsLeft));
-    utterance.lang = "sv-SE";
-    utterance.rate = .92;
-    const voice = window.speechSynthesis.getVoices().find(item => item.lang.toLowerCase().startsWith("sv"));
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.resume();
-    window.speechSynthesis.speak(utterance);
+        if (!running || paused || !roundPausing || secondsLeft < 1 || secondsLeft > 5 || !voiceEnabled) return;
+        const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
+        speakCloud(words[secondsLeft] ?? String(secondsLeft));
   }, [running, paused, roundPausing, secondsLeft, voiceEnabled]);
 
   // Kort förvarningspling när det återstår exakt fem sekunder av en ÖVNING.
