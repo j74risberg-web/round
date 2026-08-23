@@ -182,7 +182,12 @@ export default function Home() {
   const [uploadingLibraryMusic, setUploadingLibraryMusic] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
-  const announcementRef = useRef<HTMLAudioElement | null>(null); const ttsCacheRef = useRef<Map<string, string>>(new Map()); const ttsBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const announcementRef = useRef<HTMLAudioElement | null>(null);
+  const ttsCacheRef = useRef<Map<string, string>>(new Map());
+  const ttsBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const ttsPendingRef = useRef<Map<string, Promise<AudioBuffer>>>(new Map());
+  const speechQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const activeVoiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gongRef = useRef<HTMLAudioElement | null>(null);
   const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75); const announcementTokenRef = useRef(0);
@@ -312,55 +317,170 @@ export default function Home() {
       countdownStarted = true;
       window.setTimeout(() => setPreStartCount(5), 700);
     };
-    window.setTimeout(beginCountdown, 3500);
+    window.setTimeout(beginCountdown, 5000);
+    const countdownWords = ["Fem", "Fyra", "Tre", "Två", "Ett"];
+    const workoutPhrases = built.flatMap((step, index) => step.exercise.voiceUrl
+      ? [index === 0 ? "Första övningen är" : "Nästa övning är", index === 0 ? "Gör dig redo." : "Förbered dig."]
+      : [index === 0 ? `Första övningen är ${step.exercise.name}. Gör dig redo.` : `Nästa övning är ${step.exercise.name}. Förbered dig.`]);
+    const roundPausePhrases = built.slice(0, -1).flatMap((step, index) => {
+      const upcoming = built[index + 1];
+      return upcoming && upcoming.roundIndex !== step.roundIndex
+        ? [`${step.roundName} klar. Nästa är ${upcoming.roundName}. Första övningen är ${upcoming.exercise.name}.`]
+        : [];
+    });
+    prefetchTts([...countdownWords, ...workoutPhrases, ...roundPausePhrases]);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
-  const beginDuck = (level: number) => { const music = audioRef.current; if (!music) return () => {}; if (activeDucksRef.current.length === 0) musicBaseVolumeRef.current = music.volume; activeDucksRef.current.push(level); music.volume = Math.min(...activeDucksRef.current); return () => { const idx = activeDucksRef.current.indexOf(level); if (idx !== -1) activeDucksRef.current.splice(idx, 1); const m = audioRef.current; if (!m) return; m.volume = activeDucksRef.current.length ? Math.min(...activeDucksRef.current) : musicBaseVolumeRef.current; }; }; const duckForSignal = () => { const end = beginDuck(0.03); window.setTimeout(end, 2200); }; const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
+  const beginDuck = (level: number) => {
+    const music = audioRef.current;
+    if (!music) return () => {};
+    if (activeDucksRef.current.length === 0) musicBaseVolumeRef.current = music.volume || 0.75;
+    activeDucksRef.current.push(level);
+    music.volume = Math.min(...activeDucksRef.current);
+    return () => {
+      const idx = activeDucksRef.current.indexOf(level);
+      if (idx !== -1) activeDucksRef.current.splice(idx, 1);
+      const currentMusic = audioRef.current;
+      if (!currentMusic) return;
+      currentMusic.volume = activeDucksRef.current.length ? Math.min(...activeDucksRef.current) : musicBaseVolumeRef.current;
+    };
+  };
+  const duckForSignal = () => { const end = beginDuck(0.03); window.setTimeout(end, 1400); };
+  const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
   const playGong = () => { duckForSignal(); const source = gongRef.current; if (!source) return; const gong = source.cloneNode(true) as HTMLAudioElement; gong.volume = 1; gong.currentTime = 0; gong.play().catch(() => { source.currentTime = 0; source.volume = 1; source.play().catch(() => {}); }); };
-  const speakCloud = (text: string, onEnd?: () => void) => { const trimmed = text.trim(); if (!trimmed) { onEnd?.(); return; } const audio = announcementRef.current ?? new Audio(); announcementRef.current = audio; const play = (url: string) => { audio.pause(); audio.src = url; audio.currentTime = 0; audio.volume = 1; audio.onended = () => onEnd?.(); audio.onerror = () => onEnd?.(); audio.play().catch(() => onEnd?.()); }; const cached = ttsCacheRef.current.get(trimmed); if (cached) { play(cached); return; } fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}`).then(res => res.ok ? res.json() : Promise.reject()).then(data => { ttsCacheRef.current.set(trimmed, data.url); play(data.url); }).catch(() => { onEnd?.(); }); }; const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
+
+  const cancelVoicePlayback = () => {
+    announcementTokenRef.current += 1;
+    activeVoiceSourceRef.current?.stop();
+    activeVoiceSourceRef.current = null;
+    const announcement = announcementRef.current;
+    if (announcement) { announcement.pause(); announcement.removeAttribute("src"); announcement.load(); }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    speechQueueRef.current = Promise.resolve();
+    activeDucksRef.current = [];
+    if (audioRef.current) audioRef.current.volume = musicBaseVolumeRef.current;
+  };
+
+  const getTtsBuffer = (text: string): Promise<AudioBuffer> => {
+    const trimmed = text.trim();
+    const cached = ttsBufferCacheRef.current.get(trimmed);
+    if (cached) return Promise.resolve(cached);
+    const pending = ttsPendingRef.current.get(trimmed);
+    if (pending) return pending;
+    const request = (async () => {
+      let url = ttsCacheRef.current.get(trimmed);
+      if (!url) {
+        const response = await fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}`);
+        if (!response.ok) throw new Error("tts request failed");
+        const data = await response.json();
+        url = data.url as string;
+        ttsCacheRef.current.set(trimmed, url);
+      }
+      const audioResponse = await fetch(url);
+      if (!audioResponse.ok) throw new Error("tts audio fetch failed");
+      const bytes = await audioResponse.arrayBuffer();
+      const buffer = await getSoundContext().decodeAudioData(bytes.slice(0));
+      ttsBufferCacheRef.current.set(trimmed, buffer);
+      return buffer;
+    })().finally(() => ttsPendingRef.current.delete(trimmed));
+    ttsPendingRef.current.set(trimmed, request);
+    return request;
+  };
+
+  const prefetchTts = (texts: string[]) => {
+    if (!voiceEnabled || !syncCode) return;
+    [...new Set(texts.map(text => text.trim()).filter(Boolean))].forEach(text => { void getTtsBuffer(text).catch(() => {}); });
+  };
+
+  const playBuffer = (buffer: AudioBuffer, token: number) => new Promise<void>((resolve) => {
+    if (announcementTokenRef.current !== token) { resolve(); return; }
+    const ctx = getSoundContext();
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = 1.15;
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    activeVoiceSourceRef.current = source;
+    source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
+    source.start();
+  });
+
+  const fallbackSpeak = (text: string, token: number) => new Promise<void>((resolve) => {
+    if (!("speechSynthesis" in window) || announcementTokenRef.current !== token) { resolve(); return; }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "sv-SE";
+    utterance.rate = 0.95;
+    const swedish = window.speechSynthesis.getVoices().find(voice => voice.lang.toLowerCase().startsWith("sv"));
+    if (swedish) utterance.voice = swedish;
+    let done = false;
+    const finish = () => { if (done) return; done = true; resolve(); };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    window.speechSynthesis.resume();
+    window.speechSynthesis.speak(utterance);
+    window.setTimeout(finish, Math.max(3500, text.length * 120));
+  });
+
+  const playTts = async (text: string, token: number) => {
+    if (!text.trim() || announcementTokenRef.current !== token) return;
+    try {
+      const buffer = await getTtsBuffer(text);
+      if (announcementTokenRef.current === token) await playBuffer(buffer, token);
+    } catch {
+      await fallbackSpeak(text, token);
+    }
+  };
+
+  const playUrlAudio = (url: string, token: number) => new Promise<void>((resolve) => {
+    if (announcementTokenRef.current !== token) { resolve(); return; }
+    const audio = new Audio(url);
+    announcementRef.current = audio;
+    audio.preload = "auto";
+    audio.volume = 1;
+    let done = false;
+    const finish = () => { if (done) return; done = true; resolve(); };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(finish);
+  });
+
+  const enqueueSpeech = (task: (token: number) => Promise<void>, duckLevel = 0.025) => {
+    const token = announcementTokenRef.current;
+    const queued = speechQueueRef.current.catch(() => {}).then(async () => {
+      if (announcementTokenRef.current !== token) return;
+      const endDuck = beginDuck(duckLevel);
+      try { await task(token); } finally { endDuck(); }
+    });
+    speechQueueRef.current = queued.catch(() => {});
+    return queued;
+  };
+
+  const speakCloud = (text: string, onEnd?: () => void) => {
+    void enqueueSpeech(token => playTts(text, token)).finally(() => onEnd?.());
+  };
+
+  const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
     if (!exercise) { onComplete?.(); return; }
     if (!voiceEnabled && !preview) { onComplete?.(); return; }
-        const myToken = ++announcementTokenRef.current; const isCurrent = () => announcementTokenRef.current === myToken; const endDuck = beginDuck(.05);
-        let completed = false;
-        const finish = () => {
-                if (completed) return;
-                completed = true;
-                endDuck();
-                onComplete?.();
-        };
-        announcementRef.current?.pause();
-      const speak = (text: string, onEnd?: () => void) => { if (!isCurrent()) { onEnd?.(); return; } speakCloud(text, onEnd); };
-
-    if (!exercise.voiceUrl) {
-      speak(first ? `Första övningen är ${exercise.name}. Gör dig redo.` : `Nästa övning är ${exercise.name}. Förbered dig.`, finish);
-      return;
-    }
-
-    // Egen inspelning ersätter bara övningens namn. Inledning och avslut är alltid standardrösten.
-    speak(first ? "Första övningen är" : "Nästa övning är", () => { if (!isCurrent()) { finish(); return; }
-      const announcement = announcementRef.current ?? new Audio();
-      announcementRef.current = announcement;      announcement.src = exercise.voiceUrl!;
-      announcement.preload = "auto";
-      announcement.volume = 1;
-      announcement.currentTime = 0;
-      announcement.onended = () => { if (!isCurrent()) { finish(); return; } speak(first ? "Gör dig redo." : "Förbered dig.", finish); };
-      announcement.onerror = finish;
-      announcement.play().catch(() => {
-        window.alert("Den sparade inspelningen kunde inte spelas upp. Prova att spela in övningens namn på nytt.");
-        finish();
-      });
-    });
+    const fullText = first ? `Första övningen är ${exercise.name}. Gör dig redo.` : `Nästa övning är ${exercise.name}. Förbered dig.`;
+    const prefix = first ? "Första övningen är" : "Nästa övning är";
+    const suffix = first ? "Gör dig redo." : "Förbered dig.";
+    prefetchTts(exercise.voiceUrl ? [prefix, suffix] : [fullText]);
+    void enqueueSpeech(async token => {
+      if (!exercise.voiceUrl) {
+        await playTts(fullText, token);
+        return;
+      }
+      await playTts(prefix, token);
+      if (announcementTokenRef.current !== token) return;
+      await playUrlAudio(exercise.voiceUrl, token);
+      if (announcementTokenRef.current !== token) return;
+      await playTts(suffix, token);
+    }).finally(() => onComplete?.());
   };
-  const previewVoice = (exercise: Exercise) => {
-    announcementRef.current?.pause();
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    playAnnouncement(exercise, true);
-  };
-  const resetVoice = (exerciseId: string) => {
-    announcementRef.current?.pause();
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    updateExercise(exerciseId, { voiceUrl: undefined });
-  };
+  const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
+  const resetVoice = (exerciseId: string) => { cancelVoicePlayback(); updateExercise(exerciseId, { voiceUrl: undefined }); };
   const startNextStep = () => {
     const nextIndex = stepIndex + 1;
     if (nextIndex >= steps.length) {
@@ -513,7 +633,7 @@ export default function Home() {
   const current = steps[stepIndex], next = steps[stepIndex + 1];
 
   if (running && current) return <main className="player" style={{ "--accent": current.exercise.color } as React.CSSProperties}>
-    <audio ref={audioRef} src={playbackUrl ?? undefined} loop /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><small>{current.roundName}</small></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); if ("speechSynthesis" in window) window.speechSynthesis.cancel(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
+    <audio ref={audioRef} src={playbackUrl ?? undefined} loop /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><small>{current.roundName}</small></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); cancelVoicePlayback(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
     <div className={`exerciseVisual ${(current.exercise.image || resting || roundPausing) ? "hasImage" : ""}`}>{(resting || roundPausing) ? <img src="/exercises/rest.webp" alt="Vila och återhämtning" /> : current.exercise.image ? <img src={current.exercise.image} alt={current.exercise.name} /> : <span>{current.exercise.emoji}</span>}</div><p className="eyebrow">{preStarting ? "GÖR DIG REDO" : roundPausing ? "RUNDPAUS" : resting ? "VILA" : "NU"}</p><h1>{roundPausing ? `${current.roundName} klar` : resting ? "Hämta andan" : current.exercise.name}</h1><div className={`countdown ${!preStarting && secondsLeft <= 5 ? "ending" : ""}`}>{preStarting ? (preStartCount || "REDO") : secondsLeft}</div>
     <div className="progress"><span style={{ width: preStarting ? "0%" : `${((stepIndex + (roundPausing ? .9 : resting ? .7 : .2)) / steps.length) * 100}%` }} /></div><p className="upNext">{preStarting ? "Passet börjar efter nedräkningen" : roundPausing && next ? <>Nästa <strong>{next.roundName}</strong> · {next.exercise.name}</> : next ? <>Nästa <strong>{next.exercise.name}</strong></> : "Sista övningen"}</p>
     <div className="playerControls"><button disabled={preStarting} onClick={() => setSecondsLeft(v => v + 15)}>+15 sek</button><button className="pause" disabled={preStarting} onClick={() => setPaused(!paused)}>{paused ? "▶" : "Ⅱ"}</button><button disabled={preStarting} onClick={advance}>{roundPausing ? "Starta nu" : "Hoppa över"}</button></div>

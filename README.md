@@ -45,3 +45,7 @@ bell #1" av Joseph SARDIN (BigSoundBank, CC0). Se `public/sounds/LICENSE.txt`.
 
 ## Rundpaus
 Mellan olika rundor används en automatisk rundpaus på 30 sekunder. Under rundpausen kan användaren välja **Starta nu**. De sista fem sekunderna räknas ned med standardrösten (om Röstmeddelanden är aktiverat), följt av pling när nästa runda startar.
+
+## Ljud/TTS
+
+Röstmeddelanden använder serverns TTS-endpoint och cachas både på serversidan och i webbläsaren. Appen förhämtar fraser för passet, spelar tal sekventiellt i en ljudkö och sänker musiken under hela röstmeddelandet. Om TTS-ljud inte kan hämtas används webbläsarens svenska speech synthesis som fallback. `OPENAI_API_KEY` ska finnas som servermiljövariabel vid deploy och ska inte läggas i repot.
