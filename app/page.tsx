@@ -190,7 +190,7 @@ export default function Home() {
   const activeVoiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gongRef = useRef<HTMLAudioElement | null>(null);
-  const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75); const announcementTokenRef = useRef(0);
+  const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75); const musicBaseMutedRef = useRef(false); const musicDuckUsesMuteRef = useRef(false); const announcementTokenRef = useRef(0);
   const hydratedRef = useRef(false);  useEffect(() => { const el = document.createElement("audio"); el.preload = "auto"; el.style.display = "none"; document.body.appendChild(el); announcementRef.current = el; return () => { document.body.removeChild(el); if (announcementRef.current === el) announcementRef.current = null; }; }, []);
 
   // Intentional: hydrates client-only localStorage data after mount so the
@@ -336,20 +336,72 @@ export default function Home() {
         : [];
     });
     prefetchTts([...countdownWords, ...workoutPhrases, ...roundPausePhrases]);
+    prefetchTts(["Förbered dig."], 0.82);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
   const beginDuck = (level: number) => {
     const music = audioRef.current;
     if (!music) return () => {};
-    if (activeDucksRef.current.length === 0) musicBaseVolumeRef.current = music.volume || 0.75;
+
+    if (activeDucksRef.current.length === 0) {
+      musicBaseVolumeRef.current = Number.isFinite(music.volume) ? music.volume : 0.75;
+      musicBaseMutedRef.current = music.muted;
+      musicDuckUsesMuteRef.current = false;
+    }
+
     activeDucksRef.current.push(level);
-    music.volume = Math.min(...activeDucksRef.current);
+    const target = Math.min(...activeDucksRef.current);
+
+    // Desktop browsers normally honour HTMLMediaElement.volume. iOS Safari/PWA
+    // may ignore programmatic volume changes entirely. Try normal ducking first
+    // and detect whether the requested value actually stuck. If not, mute only
+    // the BACKGROUND MUSIC while speech/signals play. The TTS, pling and gong
+    // use separate audio paths and therefore remain at full volume.
+    const isIOSLike = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    if (!musicDuckUsesMuteRef.current) {
+      if (isIOSLike) {
+        // iOS deliberately ignores programmatic media volume changes.
+        musicDuckUsesMuteRef.current = true;
+        music.muted = true;
+      } else {
+        try {
+          music.volume = target;
+          if (Math.abs(music.volume - target) > 0.05) {
+            musicDuckUsesMuteRef.current = true;
+            music.muted = true;
+          }
+        } catch {
+          musicDuckUsesMuteRef.current = true;
+          music.muted = true;
+        }
+      }
+    } else {
+      music.muted = true;
+    }
+
     return () => {
       const idx = activeDucksRef.current.indexOf(level);
       if (idx !== -1) activeDucksRef.current.splice(idx, 1);
       const currentMusic = audioRef.current;
       if (!currentMusic) return;
-      currentMusic.volume = activeDucksRef.current.length ? Math.min(...activeDucksRef.current) : musicBaseVolumeRef.current;
+
+      if (activeDucksRef.current.length) {
+        const nextTarget = Math.min(...activeDucksRef.current);
+        if (musicDuckUsesMuteRef.current) currentMusic.muted = true;
+        else currentMusic.volume = nextTarget;
+        return;
+      }
+
+      if (musicDuckUsesMuteRef.current) {
+        currentMusic.muted = musicBaseMutedRef.current;
+        currentMusic.volume = musicBaseVolumeRef.current;
+      } else {
+        currentMusic.volume = musicBaseVolumeRef.current;
+        currentMusic.muted = musicBaseMutedRef.current;
+      }
+      musicDuckUsesMuteRef.current = false;
     };
   };
   const duckForSignal = () => { const end = beginDuck(0.03); window.setTimeout(end, 1400); };
@@ -365,38 +417,43 @@ export default function Home() {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     speechQueueRef.current = Promise.resolve();
     activeDucksRef.current = [];
-    if (audioRef.current) audioRef.current.volume = musicBaseVolumeRef.current;
+    if (audioRef.current) {
+      audioRef.current.volume = musicBaseVolumeRef.current;
+      audioRef.current.muted = musicBaseMutedRef.current;
+    }
+    musicDuckUsesMuteRef.current = false;
   };
 
-  const getTtsBuffer = (text: string): Promise<AudioBuffer> => {
+  const getTtsBuffer = (text: string, speed = 1): Promise<AudioBuffer> => {
     const trimmed = text.trim();
-    const cached = ttsBufferCacheRef.current.get(trimmed);
+    const cacheKey = `${speed.toFixed(2)}|${trimmed}`;
+    const cached = ttsBufferCacheRef.current.get(cacheKey);
     if (cached) return Promise.resolve(cached);
-    const pending = ttsPendingRef.current.get(trimmed);
+    const pending = ttsPendingRef.current.get(cacheKey);
     if (pending) return pending;
     const request = (async () => {
-      let url = ttsCacheRef.current.get(trimmed);
+      let url = ttsCacheRef.current.get(cacheKey);
       if (!url) {
-        const response = await fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}`);
+        const response = await fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}&speed=${speed}`);
         if (!response.ok) throw new Error("tts request failed");
         const data = await response.json();
         url = data.url as string;
-        ttsCacheRef.current.set(trimmed, url);
+        ttsCacheRef.current.set(cacheKey, url);
       }
       const audioResponse = await fetch(url);
       if (!audioResponse.ok) throw new Error("tts audio fetch failed");
       const bytes = await audioResponse.arrayBuffer();
       const buffer = await getSoundContext().decodeAudioData(bytes.slice(0));
-      ttsBufferCacheRef.current.set(trimmed, buffer);
+      ttsBufferCacheRef.current.set(cacheKey, buffer);
       return buffer;
-    })().finally(() => ttsPendingRef.current.delete(trimmed));
-    ttsPendingRef.current.set(trimmed, request);
+    })().finally(() => ttsPendingRef.current.delete(cacheKey));
+    ttsPendingRef.current.set(cacheKey, request);
     return request;
   };
 
-  const prefetchTts = (texts: string[]) => {
+  const prefetchTts = (texts: string[], speed = 1) => {
     if (!voiceEnabled || !syncCode) return;
-    [...new Set(texts.map(text => text.trim()).filter(Boolean))].forEach(text => { void getTtsBuffer(text).catch(() => {}); });
+    [...new Set(texts.map(text => text.trim()).filter(Boolean))].forEach(text => { void getTtsBuffer(text, speed).catch(() => {}); });
   };
 
   const playBuffer = (buffer: AudioBuffer, token: number) => new Promise<void>((resolve) => {
@@ -429,10 +486,10 @@ export default function Home() {
     window.setTimeout(finish, Math.max(3500, text.length * 120));
   });
 
-  const playTts = async (text: string, token: number) => {
+  const playTts = async (text: string, token: number, speed = 1) => {
     if (!text.trim() || announcementTokenRef.current !== token) return;
     try {
-      const buffer = await getTtsBuffer(text);
+      const buffer = await getTtsBuffer(text, speed);
       if (announcementTokenRef.current === token) await playBuffer(buffer, token);
     } catch {
       await fallbackSpeak(text, token);
@@ -500,8 +557,9 @@ export default function Home() {
     const phraseWithName = `${prefix} ${exercise.name}.`;
     const suffix = "Förbered dig.";
     prefetchTts(exercise.voiceUrl
-      ? (first ? [prefix] : [prefix, suffix])
-      : (first ? [phraseWithName] : [phraseWithName, suffix]));
+      ? (first ? [prefix] : [prefix])
+      : (first ? [phraseWithName] : [phraseWithName]));
+    if (!first) prefetchTts([suffix], 0.82);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -517,7 +575,7 @@ export default function Home() {
       if (first) return;
       await voicePause(520, token);
       if (announcementTokenRef.current !== token) return;
-      await playTts(suffix, token);
+      await playTts(suffix, token, 0.82);
     }, 0.008).finally(() => onComplete?.());
   };
   const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
