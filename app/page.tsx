@@ -385,7 +385,7 @@ export default function Home() {
         ? [`${step.roundName} klar. Nästa är ${upcoming.roundName}. Första övningen är ${upcoming.exercise.name}.`]
         : [];
     });
-    prefetchTts(countdownWords, 0.85);
+    prefetchTts(countdownWords);
     prefetchTts([...workoutPhrases, ...roundPausePhrases]);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
@@ -610,7 +610,7 @@ export default function Home() {
     if (!word) return;
     const token = announcementTokenRef.current;
     try {
-      const buffer = await getTtsBuffer(word, 0.85);
+      const buffer = await getTtsBuffer(word);
       if (announcementTokenRef.current !== token) return;
       // Nedräkningen ska följa klockan, inte den vanliga talkön.
       activeVoiceSourceRef.current?.stop();
