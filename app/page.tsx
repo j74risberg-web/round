@@ -414,7 +414,7 @@ export default function Home() {
     [...new Set(texts.map(text => text.trim()).filter(Boolean))].forEach(text => { void getTtsBuffer(text, speed).catch(() => {}); });
   };
 
-  const playBuffer = (buffer: AudioBuffer, token: number, naturalVoice = false) => new Promise<void>((resolve) => {
+  const playBuffer = (buffer: AudioBuffer, token: number, naturalVoice = false, outputBoost = 1) => new Promise<void>((resolve) => {
     if (announcementTokenRef.current !== token) { resolve(); return; }
     const ctx = getSoundContext();
     const source = ctx.createBufferSource();
@@ -434,7 +434,10 @@ export default function Home() {
     source.buffer = buffer;
     source.connect(gain);
     gain.connect(compressor);
-    compressor.connect(ctx.destination);
+    const outputGain = ctx.createGain();
+    outputGain.gain.value = outputBoost;
+    compressor.connect(outputGain);
+    outputGain.connect(ctx.destination);
     activeVoiceSourceRef.current = source;
     source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
     source.start();
@@ -456,18 +459,18 @@ export default function Home() {
     window.setTimeout(finish, Math.max(3500, text.length * 120));
   });
 
-  const playTts = async (text: string, token: number, speed = 1, naturalVoice = false) => {
+  const playTts = async (text: string, token: number, speed = 1, naturalVoice = false, outputBoost = 1) => {
     if (!text.trim() || announcementTokenRef.current !== token) return;
     try {
       const buffer = await getTtsBuffer(text, speed);
-      if (announcementTokenRef.current === token) await playBuffer(buffer, token, naturalVoice);
+      if (announcementTokenRef.current === token) await playBuffer(buffer, token, naturalVoice, outputBoost);
     } catch {
       await fallbackSpeak(text, token);
     }
   };
 
 
-  const playBufferLegacyVoice = (buffer: AudioBuffer, token: number) => new Promise<void>((resolve) => {
+  const playBufferLegacyVoice = (buffer: AudioBuffer, token: number, outputBoost = 1) => new Promise<void>((resolve) => {
     if (announcementTokenRef.current !== token) { resolve(); return; }
     const ctx = getSoundContext();
     const source = ctx.createBufferSource();
@@ -477,17 +480,20 @@ export default function Home() {
     gain.gain.value = 1.15;
     source.buffer = buffer;
     source.connect(gain);
-    gain.connect(ctx.destination);
+    const outputGain = ctx.createGain();
+    outputGain.gain.value = outputBoost;
+    gain.connect(outputGain);
+    outputGain.connect(ctx.destination);
     activeVoiceSourceRef.current = source;
     source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
     source.start();
   });
 
-  const playTtsLegacyVoice = async (text: string, token: number, speed = 1) => {
+  const playTtsLegacyVoice = async (text: string, token: number, speed = 1, outputBoost = 1) => {
     if (!text.trim() || announcementTokenRef.current !== token) return;
     try {
       const buffer = await getTtsBuffer(text, speed);
-      if (announcementTokenRef.current === token) await playBufferLegacyVoice(buffer, token);
+      if (announcementTokenRef.current === token) await playBufferLegacyVoice(buffer, token, outputBoost);
     } catch {
       await fallbackSpeak(text, token);
     }
@@ -562,21 +568,25 @@ export default function Home() {
       : [phraseWithName, ...(first ? [] : [suffix])]);
 
     void enqueueSpeech(async token => {
+      // Tal mellan övningar behöver vara tydligt starkare på mobil.
+      // Förstärk den färdiga signalen efter befintlig TTS-behandling så att
+      // uttalet (särskilt Armhävningar) inte förändras.
+      const betweenExerciseBoost = first ? 1 : 1.75;
       if (exercise.voiceUrl) {
-        await playTts(prefix, token);
+        await playTts(prefix, token, 1, false, betweenExerciseBoost);
         if (announcementTokenRef.current !== token) return;
         await voicePause(220, token);
         await playUrlAudio(exercise.voiceUrl, token);
       } else if (legacyArmhavningar) {
-        await playTtsLegacyVoice(phraseWithName, token, 1.0);
+        await playTtsLegacyVoice(phraseWithName, token, 1.0, betweenExerciseBoost);
       } else {
-        await playTts(phraseWithName, token, 1.0);
+        await playTts(phraseWithName, token, 1.0, false, betweenExerciseBoost);
       }
 
       if (!first && announcementTokenRef.current === token) {
         await voicePause(450, token);
         if (announcementTokenRef.current !== token) return;
-        await playTts(suffix, token, 0.9);
+        await playTts(suffix, token, 0.9, false, betweenExerciseBoost);
       }
       // Första övningen går direkt vidare till en tydlig 5–4–3–2–1-nedräkning.
     }, 0.08).finally(() => onComplete?.());
