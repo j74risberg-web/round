@@ -579,13 +579,9 @@ export default function Home() {
     if (!exercise) { onComplete?.(); return; }
     if (!voiceEnabled && !preview) { onComplete?.(); return; }
     const prefix = first ? "Första övningen är" : "Nästa övning är";
-    const legacyArmhavningar = !exercise.voiceUrl && exercise.name.trim().toLocaleLowerCase("sv-SE") === "armhävningar";
-    // Behåll Armhävningar i samma fungerande TTS-klipp, men ge prefixet mer luft.
-    // Endast denna fras ändras; ljudkedja, hastighet och volym är oförändrade.
-    const phraseWithName = legacyArmhavningar && !first
-      ? `${prefix}... ${exercise.name}.`
-      : `${prefix} ${exercise.name}.`;
+    const phraseWithName = `${prefix} ${exercise.name}.`;
     const suffix = "Förbered dig.";
+    const legacyArmhavningar = !exercise.voiceUrl && exercise.name.trim().toLocaleLowerCase("sv-SE") === "armhävningar";
 
     // Armhävningar fungerade korrekt i den äldre TTS-vägen när hela frasen
     // genererades tillsammans och spelades utan hård kompression.
@@ -604,7 +600,10 @@ export default function Home() {
         await voicePause(220, token);
         await playUrlAudio(exercise.voiceUrl, token);
       } else if (legacyArmhavningar) {
-        await playTtsLegacyVoice(phraseWithName, token, 1.0, betweenExerciseBoost);
+        // Låt just frasen ”Nästa övning är Armhävningar” få lite mer talutrymme
+        // utan att ändra text, pauser eller den fungerande ljudvägen.
+        const armhavningarSpeed = first ? 1.0 : 0.90;
+        await playTtsLegacyVoice(phraseWithName, token, armhavningarSpeed, betweenExerciseBoost);
       } else {
         await playTts(phraseWithName, token, 1.0, false, betweenExerciseBoost);
       }
