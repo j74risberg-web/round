@@ -12,11 +12,13 @@ function isValidCode(code: string | null): code is string {
 export async function GET(request: NextRequest) {
     const code = request.nextUrl.searchParams.get("code");
     const text = request.nextUrl.searchParams.get("text");
-    if (!isValidCode(code) || !text || !text.trim()) {
+    const speedRaw = request.nextUrl.searchParams.get("speed");
+    const speed = speedRaw ? Number(speedRaw) : 1;
+    if (!isValidCode(code) || !text || !text.trim() || !Number.isFinite(speed) || speed < 0.25 || speed > 4) {
           return NextResponse.json({ error: "Ogiltig kod eller text" }, { status: 400 });
         }
 
-    const hash = createHash("sha256").update(text.trim().toLowerCase()).digest("hex").slice(0, 24);
+    const hash = createHash("sha256").update(`${text.trim().toLowerCase()}|speed:${speed.toFixed(2)}`).digest("hex").slice(0, 24);
     const pathname = `tts/${code}/${hash}.mp3`;
 
     let match;
@@ -46,6 +48,7 @@ export async function GET(request: NextRequest) {
                   voice: "nova",
                   input: text,
                   response_format: "mp3",
+                  speed,
                 }),
         });
 

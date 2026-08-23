@@ -190,7 +190,11 @@ export default function Home() {
   const activeVoiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gongRef = useRef<HTMLAudioElement | null>(null);
-  const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75); const musicBaseMutedRef = useRef(false); const musicDuckUsesMuteRef = useRef(false); const announcementTokenRef = useRef(0);
+  const soundContextRef = useRef<AudioContext | null>(null);
+  const musicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const musicGainRef = useRef<GainNode | null>(null);
+  const activeDucksRef = useRef<number[]>([]);
+  const announcementTokenRef = useRef(0);
   const hydratedRef = useRef(false);  useEffect(() => { const el = document.createElement("audio"); el.preload = "auto"; el.style.display = "none"; document.body.appendChild(el); announcementRef.current = el; return () => { document.body.removeChild(el); if (announcementRef.current === el) announcementRef.current = null; }; }, []);
 
   // Intentional: hydrates client-only localStorage data after mount so the
@@ -336,75 +340,29 @@ export default function Home() {
         : [];
     });
     prefetchTts([...countdownWords, ...workoutPhrases, ...roundPausePhrases]);
-    prefetchTts(["Förbered dig."], 0.82);
+    prefetchTts(["Förbered dig."], 0.62);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
   const beginDuck = (level: number) => {
-    const music = audioRef.current;
-    if (!music) return () => {};
-
-    if (activeDucksRef.current.length === 0) {
-      musicBaseVolumeRef.current = Number.isFinite(music.volume) ? music.volume : 0.75;
-      musicBaseMutedRef.current = music.muted;
-      musicDuckUsesMuteRef.current = false;
-    }
+    const gain = musicGainRef.current;
+    if (!gain) return () => {};
 
     activeDucksRef.current.push(level);
     const target = Math.min(...activeDucksRef.current);
-
-    // Desktop browsers normally honour HTMLMediaElement.volume. iOS Safari/PWA
-    // may ignore programmatic volume changes entirely. Try normal ducking first
-    // and detect whether the requested value actually stuck. If not, mute only
-    // the BACKGROUND MUSIC while speech/signals play. The TTS, pling and gong
-    // use separate audio paths and therefore remain at full volume.
-    const isIOSLike = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
-    if (!musicDuckUsesMuteRef.current) {
-      if (isIOSLike) {
-        // iOS deliberately ignores programmatic media volume changes.
-        musicDuckUsesMuteRef.current = true;
-        music.muted = true;
-      } else {
-        try {
-          music.volume = target;
-          if (Math.abs(music.volume - target) > 0.05) {
-            musicDuckUsesMuteRef.current = true;
-            music.muted = true;
-          }
-        } catch {
-          musicDuckUsesMuteRef.current = true;
-          music.muted = true;
-        }
-      }
-    } else {
-      music.muted = true;
-    }
+    const ctx = getSoundContext();
+    gain.gain.cancelScheduledValues(ctx.currentTime);
+    gain.gain.setTargetAtTime(target, ctx.currentTime, 0.035);
 
     return () => {
       const idx = activeDucksRef.current.indexOf(level);
       if (idx !== -1) activeDucksRef.current.splice(idx, 1);
-      const currentMusic = audioRef.current;
-      if (!currentMusic) return;
-
-      if (activeDucksRef.current.length) {
-        const nextTarget = Math.min(...activeDucksRef.current);
-        if (musicDuckUsesMuteRef.current) currentMusic.muted = true;
-        else currentMusic.volume = nextTarget;
-        return;
-      }
-
-      if (musicDuckUsesMuteRef.current) {
-        currentMusic.muted = musicBaseMutedRef.current;
-        currentMusic.volume = musicBaseVolumeRef.current;
-      } else {
-        currentMusic.volume = musicBaseVolumeRef.current;
-        currentMusic.muted = musicBaseMutedRef.current;
-      }
-      musicDuckUsesMuteRef.current = false;
+      const nextTarget = activeDucksRef.current.length ? Math.min(...activeDucksRef.current) : 1;
+      const currentCtx = getSoundContext();
+      gain.gain.cancelScheduledValues(currentCtx.currentTime);
+      gain.gain.setTargetAtTime(nextTarget, currentCtx.currentTime, 0.08);
     };
   };
-  const duckForSignal = () => { const end = beginDuck(0.03); window.setTimeout(end, 1400); };
+  const duckForSignal = () => { const end = beginDuck(0.14); window.setTimeout(end, 1400); };
   const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
   const playGong = () => { duckForSignal(); const source = gongRef.current; if (!source) return; const gong = source.cloneNode(true) as HTMLAudioElement; gong.volume = 1; gong.currentTime = 0; gong.play().catch(() => { source.currentTime = 0; source.volume = 1; source.play().catch(() => {}); }); };
 
@@ -417,11 +375,12 @@ export default function Home() {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     speechQueueRef.current = Promise.resolve();
     activeDucksRef.current = [];
-    if (audioRef.current) {
-      audioRef.current.volume = musicBaseVolumeRef.current;
-      audioRef.current.muted = musicBaseMutedRef.current;
+    const gain = musicGainRef.current;
+    const ctx = soundContextRef.current;
+    if (gain && ctx) {
+      gain.gain.cancelScheduledValues(ctx.currentTime);
+      gain.gain.setValueAtTime(1, ctx.currentTime);
     }
-    musicDuckUsesMuteRef.current = false;
   };
 
   const getTtsBuffer = (text: string, speed = 1): Promise<AudioBuffer> => {
@@ -509,7 +468,7 @@ export default function Home() {
     audio.play().catch(finish);
   });
 
-  const enqueueSpeech = (task: (token: number) => Promise<void>, duckLevel = 0.025) => {
+  const enqueueSpeech = (task: (token: number) => Promise<void>, duckLevel = 0.14) => {
     const token = announcementTokenRef.current;
     const queued = speechQueueRef.current.catch(() => {}).then(async () => {
       if (announcementTokenRef.current !== token) return;
@@ -543,7 +502,7 @@ export default function Home() {
       // Nedräkningen ska följa klockan, inte den vanliga talkön.
       activeVoiceSourceRef.current?.stop();
       activeVoiceSourceRef.current = null;
-      const endDuck = beginDuck(0.008);
+      const endDuck = beginDuck(0.14);
       try { await playBuffer(buffer, token); } finally { endDuck(); }
     } catch {
       await fallbackSpeak(word, token);
@@ -559,7 +518,7 @@ export default function Home() {
     prefetchTts(exercise.voiceUrl
       ? (first ? [prefix] : [prefix])
       : (first ? [phraseWithName] : [phraseWithName]));
-    if (!first) prefetchTts([suffix], 0.82);
+    if (!first) prefetchTts([suffix], 0.62);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -575,8 +534,8 @@ export default function Home() {
       if (first) return;
       await voicePause(520, token);
       if (announcementTokenRef.current !== token) return;
-      await playTts(suffix, token, 0.82);
-    }, 0.008).finally(() => onComplete?.());
+      await playTts(suffix, token, 0.62);
+    }, 0.14).finally(() => onComplete?.());
   };
   const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
   const resetVoice = (exerciseId: string) => { cancelVoicePlayback(); updateExercise(exerciseId, { voiceUrl: undefined }); };
@@ -677,6 +636,33 @@ export default function Home() {
   }, [running, paused, preStarting, resting, roundPausing, secondsLeft, stepIndex]);
 
   useEffect(() => { if (!running || paused || preStarting) return; const id = window.setInterval(() => setSecondsLeft(value => { if (value <= 1) { window.setTimeout(advance, 0); return 0; } return value - 1; }), 1000); return () => window.clearInterval(id); }, [running, paused, preStarting, roundPausing, stepIndex, resting, steps]);
+  useEffect(() => {
+    if (!running) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    try {
+      const ctx = getSoundContext();
+      const source = ctx.createMediaElementSource(audio);
+      const gain = ctx.createGain();
+      gain.gain.value = 1;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      musicSourceRef.current = source;
+      musicGainRef.current = gain;
+      return () => {
+        try { source.disconnect(); } catch {}
+        try { gain.disconnect(); } catch {}
+        if (musicSourceRef.current === source) musicSourceRef.current = null;
+        if (musicGainRef.current === gain) musicGainRef.current = null;
+        activeDucksRef.current = [];
+      };
+    } catch {
+      // Om Web Audio inte kan kopplas in fortsätter musiken normalt.
+      musicSourceRef.current = null;
+      musicGainRef.current = null;
+    }
+  }, [running]);
+
   useEffect(() => { const audio = audioRef.current; if (!audio) return; if (running && !paused && !preStarting && !roundPausing && playbackUrl) audio.play().catch(() => {}); else audio.pause(); }, [running, paused, preStarting, roundPausing, playbackUrl]);
 
   const addExercise = () => { const name = newName.trim(); if (!name) return; const i = exercises.length % colors.length; setExercises([...exercises, { id: crypto.randomUUID(), name, seconds: 30, rest: 15, color: colors[i], emoji: emojis[i] }]); setNewName(""); };
@@ -730,7 +716,7 @@ export default function Home() {
   const current = steps[stepIndex], next = steps[stepIndex + 1];
 
   if (running && current) return <main className="player" style={{ "--accent": current.exercise.color } as React.CSSProperties}>
-    <audio ref={audioRef} src={playbackUrl ?? undefined} loop /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><small>{current.roundName}</small></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); cancelVoicePlayback(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
+    <audio ref={audioRef} src={playbackUrl ?? undefined} loop crossOrigin="anonymous" /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><small>{current.roundName}</small></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); cancelVoicePlayback(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
     <div className={`exerciseVisual ${(current.exercise.image || resting || roundPausing) ? "hasImage" : ""}`}>{(resting || roundPausing) ? <img src="/exercises/rest.webp" alt="Vila och återhämtning" /> : current.exercise.image ? <img src={current.exercise.image} alt={current.exercise.name} /> : <span>{current.exercise.emoji}</span>}</div><p className="eyebrow">{preStarting ? "GÖR DIG REDO" : roundPausing ? "RUNDPAUS" : resting ? "VILA" : "NU"}</p><h1>{roundPausing ? `${current.roundName} klar` : resting ? "Hämta andan" : current.exercise.name}</h1><div className={`countdown ${!preStarting && secondsLeft <= 5 ? "ending" : ""}`}>{preStarting ? (preStartCount || "REDO") : secondsLeft}</div>
     <div className="progress"><span style={{ width: preStarting ? "0%" : `${((stepIndex + (roundPausing ? .9 : resting ? .7 : .2)) / steps.length) * 100}%` }} /></div><p className="upNext">{preStarting ? "Passet börjar efter nedräkningen" : roundPausing && next ? <>Nästa <strong>{next.roundName}</strong> · {next.exercise.name}</> : next ? <>Nästa <strong>{next.exercise.name}</strong></> : "Sista övningen"}</p>
     <div className="playerControls"><button disabled={preStarting} onClick={() => setSecondsLeft(v => v + 15)}>+15 sek</button><button className="pause" disabled={preStarting} onClick={() => setPaused(!paused)}>{paused ? "▶" : "Ⅱ"}</button><button disabled={preStarting} onClick={advance}>{roundPausing ? "Starta nu" : "Hoppa över"}</button></div>
