@@ -195,7 +195,53 @@ export default function Home() {
   const musicGainRef = useRef<GainNode | null>(null);
   const activeDucksRef = useRef<number[]>([]);
   const announcementTokenRef = useRef(0);
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const hydratedRef = useRef(false);  useEffect(() => { const el = document.createElement("audio"); el.preload = "auto"; el.style.display = "none"; document.body.appendChild(el); announcementRef.current = el; return () => { document.body.removeChild(el); if (announcementRef.current === el) announcementRef.current = null; }; }, []);
+
+  // Håll skärmen vaken under ett aktivt träningspass. Webbläsaren kan släppa
+  // Wake Lock när appen hamnar i bakgrunden, så begär det igen när den blir synlig.
+  useEffect(() => {
+    let cancelled = false;
+    const wakeNavigator = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } };
+
+    const requestWakeLock = async () => {
+      if (!running || document.visibilityState !== "visible" || !wakeNavigator.wakeLock || wakeLockRef.current) return;
+      try {
+        const lock = await wakeNavigator.wakeLock.request("screen");
+        if (cancelled || !running) {
+          await lock.release().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = lock;
+      } catch {
+        // Wake Lock saknas eller nekades; passet fortsätter normalt.
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      const lock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (lock) await lock.release().catch(() => {});
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void requestWakeLock();
+      else wakeLockRef.current = null;
+    };
+
+    if (running) {
+      void requestWakeLock();
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    } else {
+      void releaseWakeLock();
+    }
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      void releaseWakeLock();
+    };
+  }, [running]);
 
   // Intentional: hydrates client-only localStorage data after mount so the
   // server-rendered markup (no localStorage access) matches the client's first
@@ -339,7 +385,8 @@ export default function Home() {
         ? [`${step.roundName} klar. Nästa är ${upcoming.roundName}. Första övningen är ${upcoming.exercise.name}.`]
         : [];
     });
-    prefetchTts([...countdownWords, ...workoutPhrases, ...roundPausePhrases]);
+    prefetchTts(countdownWords, 0.85);
+    prefetchTts([...workoutPhrases, ...roundPausePhrases]);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
   const beginDuck = (level: number) => {
@@ -563,7 +610,7 @@ export default function Home() {
     if (!word) return;
     const token = announcementTokenRef.current;
     try {
-      const buffer = await getTtsBuffer(word);
+      const buffer = await getTtsBuffer(word, 0.85);
       if (announcementTokenRef.current !== token) return;
       // Nedräkningen ska följa klockan, inte den vanliga talkön.
       activeVoiceSourceRef.current?.stop();
