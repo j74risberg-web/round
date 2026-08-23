@@ -437,7 +437,18 @@ export default function Home() {
     const outputGain = ctx.createGain();
     outputGain.gain.value = outputBoost;
     compressor.connect(outputGain);
-    outputGain.connect(ctx.destination);
+    if (outputBoost > 1) {
+      const loudness = ctx.createDynamicsCompressor();
+      loudness.threshold.value = -10;
+      loudness.knee.value = 3;
+      loudness.ratio.value = 10;
+      loudness.attack.value = 0.002;
+      loudness.release.value = 0.15;
+      outputGain.connect(loudness);
+      loudness.connect(ctx.destination);
+    } else {
+      outputGain.connect(ctx.destination);
+    }
     activeVoiceSourceRef.current = source;
     source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
     source.start();
@@ -483,7 +494,18 @@ export default function Home() {
     const outputGain = ctx.createGain();
     outputGain.gain.value = outputBoost;
     gain.connect(outputGain);
-    outputGain.connect(ctx.destination);
+    if (outputBoost > 1) {
+      const loudness = ctx.createDynamicsCompressor();
+      loudness.threshold.value = -10;
+      loudness.knee.value = 3;
+      loudness.ratio.value = 10;
+      loudness.attack.value = 0.002;
+      loudness.release.value = 0.15;
+      outputGain.connect(loudness);
+      loudness.connect(ctx.destination);
+    } else {
+      outputGain.connect(ctx.destination);
+    }
     activeVoiceSourceRef.current = source;
     source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
     source.start();
@@ -571,7 +593,7 @@ export default function Home() {
       // Tal mellan övningar behöver vara tydligt starkare på mobil.
       // Förstärk den färdiga signalen efter befintlig TTS-behandling så att
       // uttalet (särskilt Armhävningar) inte förändras.
-      const betweenExerciseBoost = first ? 1 : 1.75;
+      const betweenExerciseBoost = first ? 1 : 3.2;
       if (exercise.voiceUrl) {
         await playTts(prefix, token, 1, false, betweenExerciseBoost);
         if (announcementTokenRef.current !== token) return;
