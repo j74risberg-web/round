@@ -187,6 +187,7 @@ export default function Home() {
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [uploadingExerciseId, setUploadingExerciseId] = useState<string | null>(null);
   const [uploadingLibraryMusic, setUploadingLibraryMusic] = useState(false);
+  const [previewTrackId, setPreviewTrackId] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const announcementRef = useRef<HTMLAudioElement | null>(null);
@@ -196,6 +197,7 @@ export default function Home() {
   const speechQueueRef = useRef<Promise<void>>(Promise.resolve());
   const activeVoiceSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const gongRef = useRef<HTMLAudioElement | null>(null);
   const soundContextRef = useRef<AudioContext | null>(null);
   const musicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
@@ -798,17 +800,53 @@ export default function Home() {
 
   useEffect(() => { const audio = audioRef.current; if (!audio) return; if (running && !paused && !preStarting && !roundPausing && playbackUrl) audio.play().catch(() => {}); else audio.pause(); }, [running, paused, preStarting, roundPausing, playbackUrl]);
 
+
+  useEffect(() => () => {
+    const audio = previewAudioRef.current;
+    if (audio) { audio.pause(); audio.currentTime = 0; }
+    previewAudioRef.current = null;
+  }, []);
+
   const addExercise = () => { const name = newName.trim(); if (!name) return; const i = exercises.length % colors.length; setExercises([...exercises, { id: crypto.randomUUID(), name, seconds: 30, rest: 15, color: colors[i], emoji: emojis[i] }]); setNewName(""); };
   const moveExercise = (round: Round, index: number, direction: -1 | 1) => { const target = index + direction; if (target < 0 || target >= round.exerciseIds.length) return; const ids = [...round.exerciseIds]; [ids[index], ids[target]] = [ids[target], ids[index]]; updateRound(round.id, { exerciseIds: ids }); };
   const addMusicToLibrary = async (file?: File) => {
-    if (!file || !syncCode) return;
+    if (!file || !syncCode || uploadingLibraryMusic) return;
     setUploadingLibraryMusic(true);
     try {
       const url = await uploadAudio(syncCode, file, file.name);
       const track: MusicTrack = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ""), url };
       setMusicLibrary(current => [...current, track]);
     } catch { window.alert("Musikfilen kunde inte laddas upp. Kontrollera din internetuppkoppling och försök igen."); }
-    setUploadingLibraryMusic(false);
+    finally { setUploadingLibraryMusic(false); }
+  };
+  const toggleTrackPreview = (track: MusicTrack) => {
+    const current = previewAudioRef.current;
+    if (previewTrackId === track.id && current) {
+      current.pause();
+      current.currentTime = 0;
+      previewAudioRef.current = null;
+      setPreviewTrackId(null);
+      return;
+    }
+    if (current) {
+      current.pause();
+      current.currentTime = 0;
+    }
+    const audio = new Audio(track.url);
+    previewAudioRef.current = audio;
+    setPreviewTrackId(track.id);
+    audio.onended = () => {
+      if (previewAudioRef.current === audio) previewAudioRef.current = null;
+      setPreviewTrackId(currentId => currentId === track.id ? null : currentId);
+    };
+    audio.onerror = () => {
+      if (previewAudioRef.current === audio) previewAudioRef.current = null;
+      setPreviewTrackId(currentId => currentId === track.id ? null : currentId);
+    };
+    audio.play().catch(() => {
+      if (previewAudioRef.current === audio) previewAudioRef.current = null;
+      setPreviewTrackId(currentId => currentId === track.id ? null : currentId);
+    });
   };
   const removeMusicFromLibrary = (track: MusicTrack) => {
     const usedBy = exercises.filter(exercise => exercise.music === track.url).map(exercise => exercise.name);
@@ -919,6 +957,6 @@ export default function Home() {
     </> : tab === "ovningar" ? <><div className="sectionTitle"><div><h2>Övningsbibliotek</h2><p>{exercises.filter(e => !hiddenExerciseIds.includes(e.id)).length} övningar</p></div></div><div className="addExercise"><input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && addExercise()} placeholder="Namn på ny övning" /><button onClick={addExercise}>Lägg till</button></div>
       <div className="libraryGrid">{exercises.filter(e => !hiddenExerciseIds.includes(e.id)).map(e => { const isCustomMusic = !!e.music && e.music !== "none" && !musicLibrary.some(track => track.url === e.music); return <article key={e.id}><div className={`libraryVisual ${e.image ? "hasImage" : ""}`} style={{ background: e.color }}>{e.image ? <img src={e.image} alt={e.name} /> : e.emoji}<label className="imageUpload" title={e.image ? "Byt bild" : "Lägg till bild"} aria-label={e.image ? "Byt bild" : "Lägg till bild"}>{e.image ? "✎" : "+"}<input type="file" accept="image/*" onChange={x => selectImage(e.id, x.target.files?.[0])} /></label></div><div className="exerciseNameRow"><input className="exerciseName" value={e.name} onChange={x => updateExercise(e.id, { name: x.target.value })} /><button className="hideExerciseIcon" title="Dölj övning" aria-label={`Dölj ${e.name}`} onClick={() => setHiddenExerciseIds(ids => ids.includes(e.id) ? ids : [...ids, e.id])}>−</button></div><div className="timeInputs"><label>Arbete<TimeInput min={5} value={e.seconds} onChange={seconds => updateExercise(e.id, { seconds })} /><span>sek</span></label><label>Vila<TimeInput min={0} value={e.rest} onChange={rest => updateExercise(e.id, { rest })} /><span>sek</span></label></div><div className="recordVoice"><div className="voiceTop"><span>Röstmeddelande</span>{recordingId === e.id ? <button className="recording" onClick={stopRecording}>■ Stoppa</button> : <button disabled={recordingId !== null} onClick={() => startRecording(e.id)}>🎙 {e.voiceUrl ? "Spela in på nytt" : "Spela in"}</button>}</div><small>{uploadingExerciseId === e.id ? "Laddar upp…" : recordingId === e.id ? `Säg bara: ”${e.name}”` : e.voiceUrl ? `Eget övningsnamn sparat · ”Nästa övning är” läses med standardrösten` : `Spela bara in övningens namn: ”${e.name}”`}</small>{e.voiceUrl && <div className="voiceActions"><button className="listenVoice" onClick={() => previewVoice(e)}>▶ Provlyssna</button><button className="resetVoice" onClick={() => resetVoice(e.id)}>↶ Standardröst</button></div>}</div><label className="exerciseMusic">Musik<select value={e.music || "none"} onChange={x => { const track = musicLibrary.find(item => item.url === x.target.value); updateExercise(e.id, { music: x.target.value, musicName: track?.name }); }}><option value="none">Ingen musik</option>{musicLibrary.map(track => <option key={track.id} value={track.url}>{track.name}</option>)}{isCustomMusic && !musicLibrary.some(track => track.url === e.music) && <option value={e.music}>Egen: {e.musicName}</option>}</select></label>{isCustomMusic && <span className="customMusicName">♫ {e.musicName}{uploadingExerciseId === e.id ? " · laddar upp…" : ""}</span>}</article>; })}</div>
       {hiddenExerciseIds.length > 0 && <section className="hiddenExercises"><button className="hiddenExercisesToggle" onClick={() => setShowHiddenExercises(!showHiddenExercises)}><span>Dolda övningar <b>{hiddenExerciseIds.length}</b></span><i>{showHiddenExercises ? "⌃" : "⌄"}</i></button>{showHiddenExercises && <div className="hiddenExerciseList">{exercises.filter(e => hiddenExerciseIds.includes(e.id)).map(e => <div key={e.id}><span>{e.image ? <img src={e.image} alt="" /> : e.emoji}<strong>{e.name}</strong></span><button onClick={() => setHiddenExerciseIds(ids => ids.filter(id => id !== e.id))}>Visa igen</button></div>)}</div>}</section>}
-    </> : <><div className="sectionTitle"><div><h2>Musikbibliotek</h2><p>{musicLibrary.length} låtar · ladda upp en gång och återanvänd överallt.</p></div></div><label className="musicLibraryUpload">＋ Lägg till låt {uploadingLibraryMusic ? "· laddar upp…" : ""}<input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac" onChange={e => addMusicToLibrary(e.target.files?.[0])} /></label><div className="trackLibrary">{musicLibrary.map(track => <article key={track.id}><button className="trackPlay" onClick={() => { const audio = new Audio(track.url); audio.play().catch(() => {}); }}>▶</button><div><strong>{track.name}</strong><span>Kan väljas på valfri övning</span></div><span className="trackActions">{track.bundled && <span className="bundledTrack">I appen</span>}<button className="trackDelete" onClick={() => removeMusicFromLibrary(track)} aria-label={`Ta bort ${track.name}`}>Ta bort</button></span></article>)}</div></>}<nav className="bottomNav"><button className={tab === "pass" && !editingPass ? "active" : ""} onClick={() => { setTab("pass"); setEditingPass(false); }}><i>◉</i><span>Pass</span></button><button className={tab === "ovningar" ? "active" : ""} onClick={() => setTab("ovningar")}><i>▦</i><span>Övningar</span></button><button className={tab === "musik" ? "active" : ""} onClick={() => setTab("musik")}><i>♫</i><span>Musik</span></button><button className={tab === "pass" && editingPass ? "active" : ""} onClick={() => { setTab("pass"); setEditingPass(true); }}><i>⚙</i><span>Redigera</span></button></nav>{tab === "pass" && editingPass && <footer>Synkas mellan enheter med samma kod. Sparas även lokalt som säkerhetskopia.</footer>}
+    </> : <><div className="sectionTitle"><div><h2>Musikbibliotek</h2><p>{musicLibrary.length} låtar · ladda upp en gång och återanvänd överallt.</p></div></div><label className={`musicLibraryUpload${uploadingLibraryMusic ? " uploading" : ""}`} aria-busy={uploadingLibraryMusic}>{uploadingLibraryMusic ? <><span className="uploadSpinner" aria-hidden="true" /> Laddar upp…</> : <>＋ Lägg till låt</>}<input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac" disabled={uploadingLibraryMusic} onChange={e => { const input = e.currentTarget; void addMusicToLibrary(input.files?.[0]).finally(() => { input.value = ""; }); }} /></label><div className="trackLibrary">{[...musicLibrary].sort((a, b) => a.name.localeCompare(b.name, "sv", { sensitivity: "base" })).map(track => <article key={track.id} className={previewTrackId === track.id ? "isPlaying" : ""}><button className="trackPlay" onClick={() => toggleTrackPreview(track)} aria-label={previewTrackId === track.id ? `Stoppa ${track.name}` : `Spela ${track.name}`} aria-pressed={previewTrackId === track.id}>{previewTrackId === track.id ? <span className="playingBars" aria-hidden="true"><i /><i /><i /></span> : "▶"}</button><div><strong>{track.name}</strong><span>Kan väljas på valfri övning</span></div><span className="trackActions">{track.bundled && <span className="bundledTrack">I appen</span>}<button className="trackDelete" onClick={() => removeMusicFromLibrary(track)} aria-label={`Ta bort ${track.name}`}>Ta bort</button></span></article>)}</div></>}<nav className="bottomNav"><button className={tab === "pass" && !editingPass ? "active" : ""} onClick={() => { setTab("pass"); setEditingPass(false); }}><i>◉</i><span>Pass</span></button><button className={tab === "ovningar" ? "active" : ""} onClick={() => setTab("ovningar")}><i>▦</i><span>Övningar</span></button><button className={tab === "musik" ? "active" : ""} onClick={() => setTab("musik")}><i>♫</i><span>Musik</span></button><button className={tab === "pass" && editingPass ? "active" : ""} onClick={() => { setTab("pass"); setEditingPass(true); }}><i>⚙</i><span>Redigera</span></button></nav>{tab === "pass" && editingPass && <footer>Synkas mellan enheter med samma kod. Sparas även lokalt som säkerhetskopia.</footer>}
   </main>;
 }
