@@ -425,10 +425,10 @@ export default function Home() {
     // utan att ändra musikducking, pling eller gong.
     // Standardfraser får maximal förstärkning. Enstaka längre övningsnamn kan
     // låta hoptryckta av den hårda limitern och får därför en naturligare kedja.
-    gain.gain.value = naturalVoice ? 2.1 : 4.0;
-    compressor.threshold.value = naturalVoice ? -10 : -3;
+    gain.gain.value = naturalVoice ? 1.55 : 4.0;
+    compressor.threshold.value = naturalVoice ? -16 : -3;
     compressor.knee.value = naturalVoice ? 8 : 0;
-    compressor.ratio.value = naturalVoice ? 4 : 20;
+    compressor.ratio.value = naturalVoice ? 2.5 : 20;
     compressor.attack.value = naturalVoice ? 0.004 : 0.001;
     compressor.release.value = naturalVoice ? 0.18 : 0.12;
     source.buffer = buffer;
