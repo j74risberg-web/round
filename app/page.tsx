@@ -185,7 +185,7 @@ export default function Home() {
   const announcementRef = useRef<HTMLAudioElement | null>(null); const ttsCacheRef = useRef<Map<string, string>>(new Map()); const ttsBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gongRef = useRef<HTMLAudioElement | null>(null);
-  const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75);
+  const soundContextRef = useRef<AudioContext | null>(null); const activeDucksRef = useRef<number[]>([]); const musicBaseVolumeRef = useRef(0.75); const announcementTokenRef = useRef(0);
   const hydratedRef = useRef(false);  useEffect(() => { const el = document.createElement("audio"); el.preload = "auto"; el.style.display = "none"; document.body.appendChild(el); announcementRef.current = el; return () => { document.body.removeChild(el); if (announcementRef.current === el) announcementRef.current = null; }; }, []);
 
   // Intentional: hydrates client-only localStorage data after mount so the
@@ -317,10 +317,10 @@ export default function Home() {
   };
   const beginDuck = (level: number) => { const music = audioRef.current; if (!music) return () => {}; if (activeDucksRef.current.length === 0) musicBaseVolumeRef.current = music.volume; activeDucksRef.current.push(level); music.volume = Math.min(...activeDucksRef.current); return () => { const idx = activeDucksRef.current.indexOf(level); if (idx !== -1) activeDucksRef.current.splice(idx, 1); const m = audioRef.current; if (!m) return; m.volume = activeDucksRef.current.length ? Math.min(...activeDucksRef.current) : musicBaseVolumeRef.current; }; }; const duckForSignal = () => { const end = beginDuck(0.03); window.setTimeout(end, 2200); }; const playPling = () => { duckForSignal(); const ctx = getSoundContext(); const now = ctx.currentTime; const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 1.25; compressor.threshold.value = -12; compressor.knee.value = 8; compressor.ratio.value = 5; master.connect(compressor); compressor.connect(ctx.destination); [620, 930, 1370, 2010].forEach((frequency, index) => { const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.type = index < 2 ? "triangle" : "sine"; osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.72 / (index + 1), now + .008); gain.gain.exponentialRampToValueAtTime(.0001, now + 1.35); osc.connect(gain); gain.connect(master); osc.start(now); osc.stop(now + 1.4); }); };
   const playGong = () => { duckForSignal(); const source = gongRef.current; if (!source) return; const gong = source.cloneNode(true) as HTMLAudioElement; gong.volume = 1; gong.currentTime = 0; gong.play().catch(() => { source.currentTime = 0; source.volume = 1; source.play().catch(() => {}); }); };
-  const speakCloud = (text: string, onEnd?: () => void) => { const trimmed = text.trim(); if (!trimmed) { onEnd?.(); return; } const audio = announcementRef.current ?? new Audio(); announcementRef.current = audio; const play = (url: string) => { audio.pause(); audio.src = url; audio.currentTime = 0; audio.onended = () => onEnd?.(); audio.onerror = () => onEnd?.(); audio.play().catch(() => onEnd?.()); }; const cached = ttsCacheRef.current.get(trimmed); if (cached) { play(cached); return; } fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}`).then(res => res.ok ? res.json() : Promise.reject()).then(data => { ttsCacheRef.current.set(trimmed, data.url); play(data.url); }).catch(() => { onEnd?.(); }); }; const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
+  const speakCloud = (text: string, onEnd?: () => void) => { const trimmed = text.trim(); if (!trimmed) { onEnd?.(); return; } const audio = announcementRef.current ?? new Audio(); announcementRef.current = audio; const play = (url: string) => { audio.pause(); audio.src = url; audio.currentTime = 0; audio.volume = 1; audio.onended = () => onEnd?.(); audio.onerror = () => onEnd?.(); audio.play().catch(() => onEnd?.()); }; const cached = ttsCacheRef.current.get(trimmed); if (cached) { play(cached); return; } fetch(`/api/tts?code=${syncCode}&text=${encodeURIComponent(trimmed)}`).then(res => res.ok ? res.json() : Promise.reject()).then(data => { ttsCacheRef.current.set(trimmed, data.url); play(data.url); }).catch(() => { onEnd?.(); }); }; const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
     if (!exercise) { onComplete?.(); return; }
     if (!voiceEnabled && !preview) { onComplete?.(); return; }
-        const endDuck = beginDuck(.12);
+        const myToken = ++announcementTokenRef.current; const isCurrent = () => announcementTokenRef.current === myToken; const endDuck = beginDuck(.05);
         let completed = false;
         const finish = () => {
                 if (completed) return;
@@ -329,7 +329,7 @@ export default function Home() {
                 onComplete?.();
         };
         announcementRef.current?.pause();
-      const speak = (text: string, onEnd?: () => void) => speakCloud(text, onEnd);
+      const speak = (text: string, onEnd?: () => void) => { if (!isCurrent()) { onEnd?.(); return; } speakCloud(text, onEnd); };
 
     if (!exercise.voiceUrl) {
       speak(first ? `Första övningen är ${exercise.name}. Gör dig redo.` : `Nästa övning är ${exercise.name}. Förbered dig.`, finish);
@@ -337,13 +337,13 @@ export default function Home() {
     }
 
     // Egen inspelning ersätter bara övningens namn. Inledning och avslut är alltid standardrösten.
-    speak(first ? "Första övningen är" : "Nästa övning är", () => {
+    speak(first ? "Första övningen är" : "Nästa övning är", () => { if (!isCurrent()) { finish(); return; }
       const announcement = announcementRef.current ?? new Audio();
       announcementRef.current = announcement;      announcement.src = exercise.voiceUrl!;
       announcement.preload = "auto";
       announcement.volume = 1;
       announcement.currentTime = 0;
-      announcement.onended = () => speak(first ? "Gör dig redo." : "Förbered dig.", finish);
+      announcement.onended = () => { if (!isCurrent()) { finish(); return; } speak(first ? "Gör dig redo." : "Förbered dig.", finish); };
       announcement.onerror = finish;
       announcement.play().catch(() => {
         window.alert("Den sparade inspelningen kunde inte spelas upp. Prova att spela in övningens namn på nytt.");
