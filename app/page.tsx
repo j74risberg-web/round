@@ -477,7 +477,7 @@ export default function Home() {
     audio.play().catch(finish);
   });
 
-  const enqueueSpeech = (task: (token: number) => Promise<void>, duckLevel = 0.14) => {
+  const enqueueSpeech = (task: (token: number) => Promise<void>, duckLevel = 0.08) => {
     const token = announcementTokenRef.current;
     const queued = speechQueueRef.current.catch(() => {}).then(async () => {
       if (announcementTokenRef.current !== token) return;
@@ -524,13 +524,12 @@ export default function Home() {
     const prefix = first ? "Första övningen är" : "Nästa övning är";
     const phraseWithName = `${prefix} ${exercise.name}.`;
     const suffix = "Förbered dig.";
-    const fullNextPhrase = `${phraseWithName} ${suffix}`;
-    // Med standardröst genereras hela meddelandet mellan övningarna som ett enda
-    // TTS-klipp. Det ger samma ljudkedja/nivå som första övningen och undviker
-    // att den separata frasen "Förbered dig" låter pressad eller sluddrig.
+    // Håll övningsnamnet och "Förbered dig" som två separata TTS-klipp.
+    // Det ger bättre uttal av längre svenska övningsnamn (t.ex. Armhävningar)
+    // samtidigt som båda delarna går genom exakt samma förstärkta ljudkedja.
     prefetchTts(exercise.voiceUrl
       ? [prefix, ...(first ? [] : [suffix])]
-      : [first ? phraseWithName : fullNextPhrase]);
+      : [phraseWithName, ...(first ? [] : [suffix])]);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -539,16 +538,21 @@ export default function Home() {
         await playUrlAudio(exercise.voiceUrl, token);
         if (announcementTokenRef.current !== token) return;
         if (!first) {
-          await voicePause(420, token);
+          await voicePause(450, token);
           if (announcementTokenRef.current !== token) return;
           await playTts(suffix, token, 0.9);
         }
       } else {
-        await playTts(first ? phraseWithName : fullNextPhrase, token, 0.9);
+        await playTts(phraseWithName, token, 1.0);
+        if (!first && announcementTokenRef.current === token) {
+          await voicePause(450, token);
+          if (announcementTokenRef.current !== token) return;
+          await playTts(suffix, token, 0.9);
+        }
       }
       // Första övningen går direkt vidare till en tydlig 5–4–3–2–1-nedräkning.
       // Ingen extra "Gör dig redo"-fras precis före femman.
-    }, 0.14).finally(() => onComplete?.());
+    }, 0.08).finally(() => onComplete?.());
   };
   const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
   const resetVoice = (exerciseId: string) => { cancelVoicePlayback(); updateExercise(exerciseId, { voiceUrl: undefined }); };
