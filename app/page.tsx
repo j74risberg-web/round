@@ -414,7 +414,7 @@ export default function Home() {
     [...new Set(texts.map(text => text.trim()).filter(Boolean))].forEach(text => { void getTtsBuffer(text, speed).catch(() => {}); });
   };
 
-  const playBuffer = (buffer: AudioBuffer, token: number) => new Promise<void>((resolve) => {
+  const playBuffer = (buffer: AudioBuffer, token: number, naturalVoice = false) => new Promise<void>((resolve) => {
     if (announcementTokenRef.current !== token) { resolve(); return; }
     const ctx = getSoundContext();
     const source = ctx.createBufferSource();
@@ -423,12 +423,14 @@ export default function Home() {
     // Maximera Cloud-TTS separat från övriga ljud.
     // Hög gain + limiter-lik kompression gör rösten så stark som möjligt
     // utan att ändra musikducking, pling eller gong.
-    gain.gain.value = 4.0;
-    compressor.threshold.value = -3;
-    compressor.knee.value = 0;
-    compressor.ratio.value = 20;
-    compressor.attack.value = 0.001;
-    compressor.release.value = 0.12;
+    // Standardfraser får maximal förstärkning. Enstaka längre övningsnamn kan
+    // låta hoptryckta av den hårda limitern och får därför en naturligare kedja.
+    gain.gain.value = naturalVoice ? 2.1 : 4.0;
+    compressor.threshold.value = naturalVoice ? -10 : -3;
+    compressor.knee.value = naturalVoice ? 8 : 0;
+    compressor.ratio.value = naturalVoice ? 4 : 20;
+    compressor.attack.value = naturalVoice ? 0.004 : 0.001;
+    compressor.release.value = naturalVoice ? 0.18 : 0.12;
     source.buffer = buffer;
     source.connect(gain);
     gain.connect(compressor);
@@ -454,11 +456,11 @@ export default function Home() {
     window.setTimeout(finish, Math.max(3500, text.length * 120));
   });
 
-  const playTts = async (text: string, token: number, speed = 1) => {
+  const playTts = async (text: string, token: number, speed = 1, naturalVoice = false) => {
     if (!text.trim() || announcementTokenRef.current !== token) return;
     try {
       const buffer = await getTtsBuffer(text, speed);
-      if (announcementTokenRef.current === token) await playBuffer(buffer, token);
+      if (announcementTokenRef.current === token) await playBuffer(buffer, token, naturalVoice);
     } catch {
       await fallbackSpeak(text, token);
     }
@@ -532,7 +534,7 @@ export default function Home() {
       : splitExerciseName
         ? [prefix, ...(first ? [] : [suffix])]
         : [phraseWithName, ...(first ? [] : [suffix])]);
-    if (splitExerciseName && !exercise.voiceUrl) prefetchTts([exercise.name], 0.85);
+    if (splitExerciseName && !exercise.voiceUrl) prefetchTts([exercise.name], 1.0);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -551,7 +553,7 @@ export default function Home() {
           if (announcementTokenRef.current !== token) return;
           await voicePause(360, token);
           if (announcementTokenRef.current !== token) return;
-          await playTts(exercise.name, token, 0.85);
+          await playTts(exercise.name, token, 1.0, true);
         } else {
           await playTts(phraseWithName, token, 1.0);
         }
