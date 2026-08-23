@@ -177,6 +177,7 @@ export default function Home() {
   const [resting, setResting] = useState(false);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [musicPaused, setMusicPaused] = useState(false);
   const [preStarting, setPreStarting] = useState(false);
   const [preStartCount, setPreStartCount] = useState(0);
@@ -366,6 +367,7 @@ export default function Home() {
     setPlaybackUrl(null);
     setRunning(true);
     setPaused(false);
+    setElapsedSeconds(0);
     setPreStarting(true);
     setPreStartCount(0);
 
@@ -773,6 +775,13 @@ export default function Home() {
     playPling();
   }, [running, paused, preStarting, resting, roundPausing, secondsLeft, stepIndex]);
 
+  // Total träningstid: räknar arbete, vanliga vilor och rundpauser, men pausas när hela passet pausas.
+  useEffect(() => {
+    if (!running || paused || preStarting) return;
+    const id = window.setInterval(() => setElapsedSeconds(value => value + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [running, paused, preStarting]);
+
   useEffect(() => { if (!running || paused || preStarting) return; const id = window.setInterval(() => setSecondsLeft(value => { if (value <= 1) { window.setTimeout(advance, 0); return 0; } return value - 1; }), 1000); return () => window.clearInterval(id); }, [running, paused, preStarting, roundPausing, stepIndex, resting, steps]);
   useEffect(() => {
     if (!running) return;
@@ -889,11 +898,17 @@ export default function Home() {
   };
   const stopRecording = () => { if (recorderRef.current?.state === "recording") recorderRef.current.stop(); setRecordingId(null); };
   const current = steps[stepIndex], next = steps[stepIndex + 1];
+  const elapsedHours = Math.floor(elapsedSeconds / 3600);
+  const elapsedMinutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const elapsedSecs = elapsedSeconds % 60;
+  const formattedElapsed = elapsedHours > 0
+    ? `${elapsedHours}:${String(elapsedMinutes).padStart(2, "0")}:${String(elapsedSecs).padStart(2, "0")}`
+    : `${elapsedMinutes}:${String(elapsedSecs).padStart(2, "0")}`;
 
   if (running && current) return <main className="player" style={{ "--accent": current.exercise.color } as React.CSSProperties}>
-    <audio ref={audioRef} src={playbackUrl ?? undefined} loop crossOrigin="anonymous" /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><small>{current.roundName}</small></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); cancelVoicePlayback(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
+    <audio ref={audioRef} src={playbackUrl ?? undefined} loop crossOrigin="anonymous" /><audio ref={gongRef} src="/sounds/boxing-round-double.mp3" preload="auto" /><div className="playerTop"><div className="roundStatus"><span>RUNDA {current.roundIndex + 1} AV {rounds.length}</span><div className="elapsedWorkoutTime" aria-label={`Träningstid ${formattedElapsed}`}><b aria-hidden="true">⏱</b>{formattedElapsed}</div></div><button className="endWorkout" onClick={() => { setRunning(false); setPreStarting(false); setPreStartCount(0); setRoundPausing(false); cancelVoicePlayback(); audioRef.current?.pause(); }}><b aria-hidden="true">■</b> Avsluta</button></div>
     <div className={`exerciseVisual ${(current.exercise.image || resting || roundPausing) ? "hasImage" : ""}`}>{(resting || roundPausing) ? <img src="/exercises/rest.webp" alt="Vila och återhämtning" /> : current.exercise.image ? <img src={current.exercise.image} alt={current.exercise.name} /> : <span>{current.exercise.emoji}</span>}</div><p className="eyebrow">{preStarting ? "GÖR DIG REDO" : roundPausing ? "RUNDPAUS" : resting ? "VILA" : "NU"}</p><h1>{roundPausing ? `${current.roundName} klar` : resting ? "Hämta andan" : current.exercise.name}</h1><div className={`countdown ${!preStarting && secondsLeft <= 5 ? "ending" : ""}`}>{preStarting ? (preStartCount || "REDO") : secondsLeft}</div>
-    <div className="progress"><span style={{ width: preStarting ? "0%" : `${((stepIndex + (roundPausing ? .9 : resting ? .7 : .2)) / steps.length) * 100}%` }} /></div><p className="upNext">{preStarting ? "Passet börjar efter nedräkningen" : roundPausing && next ? <>Nästa <strong>{next.roundName}</strong> · {next.exercise.name}</> : next ? <>Nästa <strong>{next.exercise.name}</strong></> : "Sista övningen"}</p>
+    <div className="progress"><span style={{ width: preStarting ? "0%" : `${((stepIndex + (roundPausing ? .9 : resting ? .7 : .2)) / steps.length) * 100}%` }} /></div><p className="upNext">{preStarting ? "Passet börjar efter nedräkningen" : roundPausing && next ? <>Nästa övning: <strong>{next.roundName}</strong> · {next.exercise.name}</> : next ? <>Nästa övning: <strong>{next.exercise.name}</strong></> : "Sista övningen"}</p>
     {playbackUrl && <div className="workoutMusicMini"><span className="workoutMusicIcon" aria-hidden="true">♫</span><div className="workoutMusicText"><strong>{current.exercise.musicName || musicLibrary.find(track => track.url === playbackUrl)?.name || "Vald låt"}</strong><small>{paused || musicPaused ? "Musik pausad" : "Spelas nu"}</small></div><button type="button" className="workoutMusicToggle" onClick={() => setMusicPaused(value => !value)} aria-label={musicPaused ? "Fortsätt spela musik" : "Pausa musik"}>{musicPaused ? "▶" : "Ⅱ"}</button></div>}
     <div className="playerControls"><button disabled={preStarting} onClick={() => setSecondsLeft(v => v + 15)}>+15 sek</button><button className="pause" disabled={preStarting} onClick={() => setPaused(!paused)}>{paused ? "▶" : "Ⅱ"}</button><button disabled={preStarting} onClick={advance}>{roundPausing ? "Starta nu" : "Hoppa över"}</button></div>
   </main>;
