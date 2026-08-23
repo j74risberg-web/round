@@ -420,10 +420,19 @@ export default function Home() {
     const ctx = getSoundContext();
     const source = ctx.createBufferSource();
     const gain = ctx.createGain();
-    gain.gain.value = 1.15;
+    const compressor = ctx.createDynamicsCompressor();
+    // Cloud-TTS-klippen är märkbart lägre än signalerna på mobil.
+    // Förstärk bara rösten; musikens ducking och pling/gong lämnas orörda.
+    gain.gain.value = 1.85;
+    compressor.threshold.value = -14;
+    compressor.knee.value = 10;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.004;
+    compressor.release.value = 0.18;
     source.buffer = buffer;
     source.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(compressor);
+    compressor.connect(ctx.destination);
     activeVoiceSourceRef.current = source;
     source.onended = () => { if (activeVoiceSourceRef.current === source) activeVoiceSourceRef.current = null; resolve(); };
     source.start();
