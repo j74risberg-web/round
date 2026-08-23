@@ -524,12 +524,14 @@ export default function Home() {
     const prefix = first ? "Första övningen är" : "Nästa övning är";
     const phraseWithName = `${prefix} ${exercise.name}.`;
     const suffix = "Förbered dig.";
-    // Håll övningsnamnet och "Förbered dig" som två separata TTS-klipp.
-    // Det ger bättre uttal av längre svenska övningsnamn (t.ex. Armhävningar)
-    // samtidigt som båda delarna går genom exakt samma förstärkta ljudkedja.
+    const splitExerciseName = exercise.name.trim().toLocaleLowerCase("sv-SE") === "armhävningar";
+    // "Armhävningar" låter onaturligt när TTS binder ihop ordet med "är".
+    // För just den övningen läses därför prefix och namn som separata klipp.
     prefetchTts(exercise.voiceUrl
       ? [prefix, ...(first ? [] : [suffix])]
-      : [phraseWithName, ...(first ? [] : [suffix])]);
+      : splitExerciseName
+        ? [prefix, exercise.name, ...(first ? [] : [suffix])]
+        : [phraseWithName, ...(first ? [] : [suffix])]);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -543,7 +545,15 @@ export default function Home() {
           await playTts(suffix, token, 0.9);
         }
       } else {
-        await playTts(phraseWithName, token, 1.0);
+        if (splitExerciseName) {
+          await playTts(prefix, token, 1.0);
+          if (announcementTokenRef.current !== token) return;
+          await voicePause(240, token);
+          if (announcementTokenRef.current !== token) return;
+          await playTts(exercise.name, token, 1.0);
+        } else {
+          await playTts(phraseWithName, token, 1.0);
+        }
         if (!first && announcementTokenRef.current === token) {
           await voicePause(450, token);
           if (announcementTokenRef.current !== token) return;
