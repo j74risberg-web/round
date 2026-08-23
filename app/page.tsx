@@ -340,7 +340,6 @@ export default function Home() {
         : [];
     });
     prefetchTts([...countdownWords, ...workoutPhrases, ...roundPausePhrases]);
-    prefetchTts(["Förbered dig."], 0.62);
     playAnnouncement(built[0].exercise, false, true, beginCountdown);
   };
   const beginDuck = (level: number) => {
@@ -525,26 +524,30 @@ export default function Home() {
     const prefix = first ? "Första övningen är" : "Nästa övning är";
     const phraseWithName = `${prefix} ${exercise.name}.`;
     const suffix = "Förbered dig.";
+    const fullNextPhrase = `${phraseWithName} ${suffix}`;
+    // Med standardröst genereras hela meddelandet mellan övningarna som ett enda
+    // TTS-klipp. Det ger samma ljudkedja/nivå som första övningen och undviker
+    // att den separata frasen "Förbered dig" låter pressad eller sluddrig.
     prefetchTts(exercise.voiceUrl
-      ? (first ? [prefix] : [prefix])
-      : (first ? [phraseWithName] : [phraseWithName]));
-    if (!first) prefetchTts([suffix], 0.62);
+      ? [prefix, ...(first ? [] : [suffix])]
+      : [first ? phraseWithName : fullNextPhrase]);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
         if (announcementTokenRef.current !== token) return;
         await voicePause(220, token);
         await playUrlAudio(exercise.voiceUrl, token);
+        if (announcementTokenRef.current !== token) return;
+        if (!first) {
+          await voicePause(420, token);
+          if (announcementTokenRef.current !== token) return;
+          await playTts(suffix, token, 0.9);
+        }
       } else {
-        await playTts(phraseWithName, token);
+        await playTts(first ? phraseWithName : fullNextPhrase, token, 0.9);
       }
-      if (announcementTokenRef.current !== token) return;
       // Första övningen går direkt vidare till en tydlig 5–4–3–2–1-nedräkning.
       // Ingen extra "Gör dig redo"-fras precis före femman.
-      if (first) return;
-      await voicePause(520, token);
-      if (announcementTokenRef.current !== token) return;
-      await playTts(suffix, token, 0.62);
     }, 0.14).finally(() => onComplete?.());
   };
   const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
