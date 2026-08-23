@@ -579,9 +579,13 @@ export default function Home() {
     if (!exercise) { onComplete?.(); return; }
     if (!voiceEnabled && !preview) { onComplete?.(); return; }
     const prefix = first ? "Första övningen är" : "Nästa övning är";
-    const phraseWithName = `${prefix} ${exercise.name}.`;
-    const suffix = "Förbered dig.";
     const legacyArmhavningar = !exercise.voiceUrl && exercise.name.trim().toLocaleLowerCase("sv-SE") === "armhävningar";
+    // Behåll Armhävningar i samma fungerande TTS-klipp, men ge prefixet mer luft.
+    // Endast denna fras ändras; ljudkedja, hastighet och volym är oförändrade.
+    const phraseWithName = legacyArmhavningar && !first
+      ? `${prefix}... ${exercise.name}.`
+      : `${prefix} ${exercise.name}.`;
+    const suffix = "Förbered dig.";
 
     // Armhävningar fungerade korrekt i den äldre TTS-vägen när hela frasen
     // genererades tillsammans och spelades utan hård kompression.
