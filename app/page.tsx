@@ -530,8 +530,9 @@ export default function Home() {
     prefetchTts(exercise.voiceUrl
       ? [prefix, ...(first ? [] : [suffix])]
       : splitExerciseName
-        ? [prefix, exercise.name, ...(first ? [] : [suffix])]
+        ? [prefix, ...(first ? [] : [suffix])]
         : [phraseWithName, ...(first ? [] : [suffix])]);
+    if (splitExerciseName && !exercise.voiceUrl) prefetchTts([exercise.name], 0.85);
     void enqueueSpeech(async token => {
       if (exercise.voiceUrl) {
         await playTts(prefix, token);
@@ -540,7 +541,7 @@ export default function Home() {
         await playUrlAudio(exercise.voiceUrl, token);
         if (announcementTokenRef.current !== token) return;
         if (!first) {
-          await voicePause(450, token);
+          await voicePause(splitExerciseName ? 650 : 450, token);
           if (announcementTokenRef.current !== token) return;
           await playTts(suffix, token, 0.9);
         }
@@ -548,14 +549,14 @@ export default function Home() {
         if (splitExerciseName) {
           await playTts(prefix, token, 1.0);
           if (announcementTokenRef.current !== token) return;
-          await voicePause(240, token);
+          await voicePause(360, token);
           if (announcementTokenRef.current !== token) return;
-          await playTts(exercise.name, token, 1.0);
+          await playTts(exercise.name, token, 0.85);
         } else {
           await playTts(phraseWithName, token, 1.0);
         }
         if (!first && announcementTokenRef.current === token) {
-          await voicePause(450, token);
+          await voicePause(splitExerciseName ? 650 : 450, token);
           if (announcementTokenRef.current !== token) return;
           await playTts(suffix, token, 0.9);
         }
