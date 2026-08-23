@@ -319,9 +319,16 @@ export default function Home() {
     };
     window.setTimeout(beginCountdown, 5000);
     const countdownWords = ["Fem", "Fyra", "Tre", "Två", "Ett"];
-    const workoutPhrases = built.flatMap((step, index) => step.exercise.voiceUrl
-      ? [index === 0 ? "Första övningen är" : "Nästa övning är", index === 0 ? "Gör dig redo." : "Förbered dig."]
-      : [index === 0 ? `Första övningen är ${step.exercise.name}. Gör dig redo.` : `Nästa övning är ${step.exercise.name}. Förbered dig.`]);
+    const workoutPhrases = built.flatMap((step, index) => {
+      if (index === 0) {
+        return step.exercise.voiceUrl
+          ? ["Första övningen är"]
+          : [`Första övningen är ${step.exercise.name}.`];
+      }
+      return step.exercise.voiceUrl
+        ? ["Nästa övning är", "Förbered dig."]
+        : [`Nästa övning är ${step.exercise.name}.`, "Förbered dig."];
+    });
     const roundPausePhrases = built.slice(0, -1).flatMap((step, index) => {
       const upcoming = built[index + 1];
       return upcoming && upcoming.roundIndex !== step.roundIndex
@@ -459,25 +466,59 @@ export default function Home() {
   const speakCloud = (text: string, onEnd?: () => void) => {
     void enqueueSpeech(token => playTts(text, token)).finally(() => onEnd?.());
   };
+  const voicePause = (ms: number, token: number) => new Promise<void>((resolve) => {
+    const id = window.setTimeout(resolve, ms);
+    if (announcementTokenRef.current !== token) {
+      window.clearTimeout(id);
+      resolve();
+    }
+  });
+
+  const playCountdownWord = async (value: number) => {
+    if (!voiceEnabled) return;
+    const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
+    const word = words[value];
+    if (!word) return;
+    const token = announcementTokenRef.current;
+    try {
+      const buffer = await getTtsBuffer(word);
+      if (announcementTokenRef.current !== token) return;
+      // Nedräkningen ska följa klockan, inte den vanliga talkön.
+      activeVoiceSourceRef.current?.stop();
+      activeVoiceSourceRef.current = null;
+      const endDuck = beginDuck(0.008);
+      try { await playBuffer(buffer, token); } finally { endDuck(); }
+    } catch {
+      await fallbackSpeak(word, token);
+    }
+  };
 
   const playAnnouncement = (exercise?: Exercise, preview = false, first = false, onComplete?: () => void) => {
     if (!exercise) { onComplete?.(); return; }
     if (!voiceEnabled && !preview) { onComplete?.(); return; }
-    const fullText = first ? `Första övningen är ${exercise.name}. Gör dig redo.` : `Nästa övning är ${exercise.name}. Förbered dig.`;
     const prefix = first ? "Första övningen är" : "Nästa övning är";
-    const suffix = first ? "Gör dig redo." : "Förbered dig.";
-    prefetchTts(exercise.voiceUrl ? [prefix, suffix] : [fullText]);
+    const phraseWithName = `${prefix} ${exercise.name}.`;
+    const suffix = "Förbered dig.";
+    prefetchTts(exercise.voiceUrl
+      ? (first ? [prefix] : [prefix, suffix])
+      : (first ? [phraseWithName] : [phraseWithName, suffix]));
     void enqueueSpeech(async token => {
-      if (!exercise.voiceUrl) {
-        await playTts(fullText, token);
-        return;
+      if (exercise.voiceUrl) {
+        await playTts(prefix, token);
+        if (announcementTokenRef.current !== token) return;
+        await voicePause(220, token);
+        await playUrlAudio(exercise.voiceUrl, token);
+      } else {
+        await playTts(phraseWithName, token);
       }
-      await playTts(prefix, token);
       if (announcementTokenRef.current !== token) return;
-      await playUrlAudio(exercise.voiceUrl, token);
+      // Första övningen går direkt vidare till en tydlig 5–4–3–2–1-nedräkning.
+      // Ingen extra "Gör dig redo"-fras precis före femman.
+      if (first) return;
+      await voicePause(520, token);
       if (announcementTokenRef.current !== token) return;
       await playTts(suffix, token);
-    }).finally(() => onComplete?.());
+    }, 0.008).finally(() => onComplete?.());
   };
   const previewVoice = (exercise: Exercise) => { cancelVoicePlayback(); playAnnouncement(exercise, true); };
   const resetVoice = (exerciseId: string) => { cancelVoicePlayback(); updateExercise(exerciseId, { voiceUrl: undefined }); };
@@ -540,14 +581,13 @@ export default function Home() {
     startNextStep();
   };
 
-  // Nedräkning före första övningen. Den använder webbläsarens svenska standardröst
-  // och startar varken arbetstid eller musik förrän hela 5–4–3–2–1 är klar.
+  // Nedräkning före första övningen använder den cachade API-rösten som en egen
+  // prioriterad sekvens och startar varken arbetstid eller musik förrän 1 är klar.
   useEffect(() => {
     if (!running || !preStarting || preStartCount <= 0) return;
-        if (voiceEnabled) {
-                const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
-                speakCloud(words[preStartCount] ?? String(preStartCount));
-        }
+    if (voiceEnabled) {
+      void playCountdownWord(preStartCount);
+    }
     const id = window.setTimeout(() => {
       if (preStartCount > 1) {
         setPreStartCount(value => value - 1);
@@ -567,9 +607,8 @@ export default function Home() {
 
   // Under rundpausen räknas de sista fem sekunderna upp med standardrösten.
   useEffect(() => {
-        if (!running || paused || !roundPausing || secondsLeft < 1 || secondsLeft > 5 || !voiceEnabled) return;
-        const words: Record<number, string> = { 5: "Fem", 4: "Fyra", 3: "Tre", 2: "Två", 1: "Ett" };
-        speakCloud(words[secondsLeft] ?? String(secondsLeft));
+    if (!running || paused || !roundPausing || secondsLeft < 1 || secondsLeft > 5 || !voiceEnabled) return;
+    void playCountdownWord(secondsLeft);
   }, [running, paused, roundPausing, secondsLeft, voiceEnabled]);
 
   // Kort förvarningspling när det återstår exakt fem sekunder av en ÖVNING.
