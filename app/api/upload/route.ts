@@ -1,34 +1,46 @@
-import { put } from "@vercel/blob";
-import { NextRequest, NextResponse } from "next/server";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
-function isValidCode(code: string | null): code is string {
-  return !!code && /^[A-Z0-9]{4,12}$/.test(code);
+function isValidCode(code: unknown): code is string {
+  return typeof code === "string" && /^[A-Z0-9]{4,12}$/.test(code);
 }
 
-const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
-export async function POST(request: NextRequest) {
-  const code = request.nextUrl.searchParams.get("code");
-  if (!isValidCode(code)) {
-    return NextResponse.json({ error: "Ogiltig synk-kod" }, { status: 400 });
+export async function POST(request: Request) {
+  const body = (await request.json()) as HandleUploadBody;
+
+  try {
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
+        let code: unknown;
+        try {
+          code = JSON.parse(clientPayload ?? "{}").code;
+        } catch {
+          throw new Error("Ogiltig uppladdningsdata");
+        }
+
+        if (!isValidCode(code)) throw new Error("Ogiltig synk-kod");
+        if (!pathname.startsWith(`sync/${code}/audio/`)) throw new Error("Ogiltig sökväg");
+
+        return {
+          allowedContentTypes: ["audio/*", "application/octet-stream"],
+          maximumSizeInBytes: MAX_BYTES,
+          addRandomSuffix: false,
+          tokenPayload: JSON.stringify({ code }),
+        };
+      },
+      onUploadCompleted: async () => {
+        // Ingen extra serveråtgärd behövs. URL:en sparas i appens synkade state.
+      },
+    });
+
+    return Response.json(jsonResponse);
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Uppladdningen misslyckades" },
+      { status: 400 },
+    );
   }
-
-  const formData = await request.formData();
-  const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Ingen fil skickades" }, { status: 400 });
-  }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "Filen är för stor (max 15 MB)" }, { status: 413 });
-  }
-
-  const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
-  const pathname = `sync/${code}/audio/${Date.now()}-${safeName}`;
-  const blob = await put(pathname, file, {
-    access: "public",
-    addRandomSuffix: false,
-    contentType: file.type || "application/octet-stream",
-  });
-
-  return NextResponse.json({ url: blob.url });
 }

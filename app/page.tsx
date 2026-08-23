@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 
 type Exercise = { id: string; name: string; seconds: number; rest: number; color: string; emoji: string; image?: string; music?: string; musicName?: string; voiceUrl?: string };
 type MusicTrack = { id: string; name: string; url: string; bundled?: boolean };
@@ -142,13 +143,19 @@ async function fetchRemoteState(code: string): Promise<SyncedState | null> {
 async function pushRemoteState(code: string, state: SyncedState) {
   await fetch(`/api/state?code=${code}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) });
 }
+const MAX_AUDIO_BYTES = 20 * 1024 * 1024; // 20 MB
+
 async function uploadAudio(code: string, file: File | Blob, filename: string): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file, filename);
-  const response = await fetch(`/api/upload?code=${code}`, { method: "POST", body: formData });
-  if (!response.ok) throw new Error("upload failed");
-  const payload = await response.json();
-  return payload.url as string;
+  if (file.size > MAX_AUDIO_BYTES) throw new Error("Filen är för stor (max 20 MB)");
+  const safeName = filename.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  const pathname = `sync/${code}/audio/${Date.now()}-${safeName}`;
+  const blob = await upload(pathname, file, {
+    access: "public",
+    handleUploadUrl: "/api/upload",
+    clientPayload: JSON.stringify({ code }),
+    contentType: file.type || "application/octet-stream",
+  });
+  return blob.url;
 }
 
 export default function Home() {
