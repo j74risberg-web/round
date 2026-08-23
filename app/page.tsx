@@ -421,14 +421,15 @@ export default function Home() {
     const source = ctx.createBufferSource();
     const gain = ctx.createGain();
     const compressor = ctx.createDynamicsCompressor();
-    // Cloud-TTS-klippen är märkbart lägre än signalerna på mobil.
-    // Förstärk bara rösten; musikens ducking och pling/gong lämnas orörda.
-    gain.gain.value = 1.85;
-    compressor.threshold.value = -14;
-    compressor.knee.value = 10;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.18;
+    // Maximera Cloud-TTS separat från övriga ljud.
+    // Hög gain + limiter-lik kompression gör rösten så stark som möjligt
+    // utan att ändra musikducking, pling eller gong.
+    gain.gain.value = 4.0;
+    compressor.threshold.value = -3;
+    compressor.knee.value = 0;
+    compressor.ratio.value = 20;
+    compressor.attack.value = 0.001;
+    compressor.release.value = 0.12;
     source.buffer = buffer;
     source.connect(gain);
     gain.connect(compressor);
