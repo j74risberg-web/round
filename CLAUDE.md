@@ -1,98 +1,59 @@
-# Round – Träningsrundan
+Round - Träningsrundan
+=======================
 
-Next.js (App Router) intervallträningsapp. Övningsbibliotek, rundor, timer,
-återanvändbart musikbibliotek och röstmeddelanden. Ingen databas – all data
-(övningar, rundor, musik, röstinställningar) synkas via en enkel synk-kod
-mot Vercel Blob (`sync/{KOD}/state.json`), och sparas som backup i
-localStorage. Ljudfiler (egna inspelningar, uppladdad musik, TTS-cache)
-lagras också i Vercel Blob under `sync/{KOD}/...` respektive `tts/{KOD}/...`.
+Next.js (App Router) intervallträningsapp med övningsbibliotek, rundor, timer, musikbibliotek och röstmeddelanden. All data (övningar, rundor, musik, röstinställningar) synkas via en enkel synk-kod mot Vercel Blob (sync/{KOD}/state.json), med backup i localStorage. Ljudfiler lagras i Vercel Blob under sync/{KOD}/... respektive tts/{KOD}/...
 
 Live: https://round-dun.vercel.app
 Repo: github.com/j74risberg-web/round
 
-## Arkitektur i korthet
+Arkitektur i korthet
+---------------------
 
-- `app/page.tsx` – hela klient-appen (en enda stor komponent, mycket kod är
-  medvetet formaterad på en rad per funktion – det är inte av misstag).
-  - `middleware.ts` + `app/pin/page.tsx` + `app/api/gate/route.ts` – PIN-spärr
-    (kod satt via `ROUND_PIN` env-var) för hela sajten.
-    - `app/api/state/route.ts` – GET/POST synk-state mot Vercel Blob.
-    - `app/api/upload/route.ts` – laddar upp musik/röstinspelningar till Blob.
-    - `app/api/tts/route.ts` – text-till-tal via OpenAI (`OPENAI_API_KEY`),
-      modell `tts-1-hd`, röst `nova`. Cachar resultat i Blob per
-        (synk-kod + sha256-hash av texten), så samma fras kostar bara en gång.
+app/page.tsx: hela klient-appen i en enda stor komponent, mycket kod formaterad medvetet på en rad per funktion.
+middleware.ts, app/pin/page.tsx, app/api/gate/route.ts: PIN-spärr (kod satt via ROUND_PIN env-var) för hela sajten.
+app/api/state/route.ts: GET/POST synk-state mot Vercel Blob.
+app/api/upload/route.ts: laddar upp musik/röstinspelningar till Blob.
+app/api/tts/route.ts: text-till-tal via OpenAI (OPENAI_API_KEY), modell tts-1-hd, röst nova, response_format mp3. Cachar resultat i Blob per synk-kod plus sha256-hash av texten.
 
-        ## Röstsystemet (senaste och känsligaste delen)
+Röstsystemet
+------------
 
-        Appen använde tidigare webbläsarens inbyggda `speechSynthesis` – funkade
-        alltid, men lät robotaktigt. Bytt till OpenAI TTS via `/api/tts`.
+Appen använde tidigare webbläsarens inbyggda speechSynthesis - funkade alltid men lät robotaktigt. Bytt till OpenAI TTS via /api/tts, uppspelat med Web Audio API.
 
-        Nyckelfunktioner i `app/page.tsx`:
-        - `speakCloud(text, onEnd)` – hämtar/cachar ljud-URL, spelar upp via ett
-          **enda, sidlivslångt `<audio>`-element** som skapas i en `useEffect` med
-            `document.createElement("audio")` (INTE som JSX) och sparas i
-              `announcementRef`. Detta är medvetet: elementet får aldrig monteras om,
-                annars tappar iOS Safari sin autoplay-"upplåsning" mitt i passet.
-                - `beginDuck(level)` / `activeDucksRef` – delad "duck-hanterare" för
-                  bakgrundsmusiken. Både pling/gong (`duckForSignal`) och röstmeddelanden
-                    (`playAnnouncement`) sänker musikvolymen via samma mekanism, så att en
-                      kort signals duckning inte råkar återställa volymen mitt i ett längre
-                        röstmeddelande. Musikens "sanna" volym sparas i `musicBaseVolumeRef` och
-                          återställs bara när ALLA aktiva duckningar är klara.
-                          - `announcementTokenRef` – varje anrop till `playAnnouncement` ökar en
-                            räknare (`myToken`). `isCurrent()` jämför mot aktuellt värde. Detta ska
-                              förhindra att ett äldre, fortfarande pågående röstmeddelande krockar med
-                                ett nytt.
+Status 2026-08-23: en tidigare bugg där röstmeddelanden ibland krockade eller lästes fel (race condition mellan asynkrona nätverkssvar) är ÅTGÄRDAD. Fixen pushades direkt via terminal/lokal Claude Code-session, inte via denna chatt-konversation. Lösningen bygger på en riktig talkö istället för enkla token-kontroller.
 
-                                ## KÄND OLÖST BUGG (viktigast att fixa)
+Nyckeldelar i den nuvarande lösningen, alla i app/page.tsx:
 
-                                **Symptom:** Ibland läses fel text upp, eller ord "trycks ihop"/rusas,
-                                speciellt mellan vissa övningar. Detta upprepades trots flera fixförsök.
+speechQueueRef och enqueueSpeech(task, duckLevel): en riktig kö av talåtgärder. Varje ny talåtgärd kedjas efter den föregående, så två röstmeddelanden kan aldrig spela eller skriva över varandra samtidigt, oavsett hur nätverkssvaren kommer tillbaka i tiden.
 
-                                **Trolig grundorsak (inte helt verifierad, men stark hypotes):**
-                                `speakCloud()`s `isCurrent()`-skydd kollar bara VID ANROPET, inte när det
-                                asynkrona nätverkssvaret faktiskt kommer tillbaka:
+announcementTokenRef: ökas för varje ny annonsering. Kontrolleras både innan och EFTER varje asynkron väntan, inte bara vid starten av ett anrop. Det var just avsaknaden av kontroll efter await/then som orsakade den gamla buggen.
 
-                                ```js
-                                fetch(`/api/tts?...`).then(res => res.json()).then(data => {
-                                  ttsCacheRef.current.set(trimmed, data.url);
-                                    play(data.url); // <-- ingen koll här om detta fortfarande är aktuellt!
-                                    });
-                                    ```
+getTtsBuffer och playBuffer: hämtar och spelar upp TTS-ljud via AudioContext.decodeAudioData och AudioBufferSourceNode, med kompression och gain för tydlighet mot bakgrundsmusiken.
 
-                                    Om övning A:s hämtning tar längre tid än övning B:s (som hann starta
-                                    senare men svara snabbare, t.ex. redan cachad), kan A:s fördröjda svar
-                                    komma tillbaka EFTER B redan börjat spela, och skriva över samma delade
-                                    `<audio>`-element (`announcementRef.current`) mitt i uppspelningen av B.
-                                    Det matchar exakt de rapporterade symptomen.
+fallbackSpeak: om hämtning eller avkodning misslyckas faller appen tillbaka på webbläsarens inbyggda speechSynthesis istället för att bli helt tyst.
 
-                                    **Föreslagen fix:** Låt `speakCloud` ta emot (eller stänga över) samma
-                                    `isCurrent()`-check som `playAnnouncement` använder, och kolla den INNE I
-                                    `.then()`-callbacken innan `play(data.url)` anropas – inte bara i
-                                    `speak()`-wrappern som anropar `speakCloud`. Just nu skyddar `isCurrent()`
-                                    bara startpunkten, inte när nätverkssvaret faktiskt används.
+prefetchTts: hämtar kommande fraser i förväg för att minska väntetid och risken för överlappande nätverksanrop.
 
-                                    ## Redan provat och INTE fungerade (undvik att upprepa)
+beginDuck, activeDucksRef, musicBaseVolumeRef: delad duck-hanterare för bakgrundsmusiken. Både pling/gong och röstmeddelanden sänker musikvolymen via samma mekanism, så att en kort signals duckning inte råkar återställa volymen mitt i ett längre röstmeddelande. Musiken återställs bara när ALLA aktiva duckningar är klara.
 
-                                    - **Web Audio API (`AudioContext.decodeAudioData`) för att spela upp
-                                      TTS-ljudet.** Gav `EncodingError: Unable to decode audio data` – OpenAIs
-                                        mp3-output går tydligen inte att avkoda med webbläsarens Web Audio-
-                                          avkodare, trots att vanlig `<audio src=...>`-uppspelning fungerar fint.
-                                            Använd `<audio>`-element för TTS-uppspelning, aldrig `decodeAudioData`.
+announcementRef: ett sidlivslångt audio-element (skapat i en useEffect med document.createElement, inte som JSX) används för egna röstinspelningar. Elementet får aldrig monteras om, annars tappar iOS Safari sin autoplay-upplåsning mitt i passet.
 
-                                            ## Övrigt att veta
+Lärdomar
+--------
 
-                                            - `mergeExerciseLibrary()`: de 15 standardövningarna kan bara döljas
-                                              (`hiddenExerciseIds`), aldrig raderas permanent – medvetet, för att
-                                                standardbiblioteket ska vara konsekvent mellan synk-koder.
-                                                - Musik i biblioteket KAN tas bort permanent (`removedMusicUrls`), till
-                                                  skillnad från övningar.
-                                                  - Synk-koder är helt isolerade "rum" – ingen delning mellan koder alls,
-                                                    varken bibliotek eller program. Diskuterat men inte byggt: ett separat
-                                                      delat bibliotekslager ovanpå personliga program.
-                                                      - Deploy sker automatiskt via Vercel vid varje push till `main`.
-                                                      - Testa alltid på riktig iPhone (Safari, gärna som hemskärms-PWA) för
-                                                        ljud-/autoplay-relaterade ändringar – skrivbordswebbläsare (inklusive
-                                                          denna sandbox) beter sig ofta mer tillåtande och döljer buggar som bara
-                                                            syns på iOS.
-                                                            
+AudioContext.decodeAudioData på OpenAIs mp3-output gav tidigare EncodingError i ett enkelt försök utan felhantering. Lösningen var inte att undvika Web Audio API helt, utan att lägga till fallbackSpeak som fångar fel och faller tillbaka på speechSynthesis. Dyker decode-fel upp igen: kolla felhanteringen runt getTtsBuffer och playBuffer innan uppspelningstekniken byts igen.
+
+En enkel koll som bara körs vid anropet, inte efter varje await, räcker inte för att förhindra race conditions mellan flera parallella nätverksanrop. En riktig kö löser det mer robust.
+
+Testa alltid röst- och autoplay-relaterade ändringar på riktig iPhone, gärna som hemskärms-PWA. Skrivbordswebbläsare beter sig ofta mer tillåtande och döljer buggar som bara syns på iOS.
+
+Övrigt att veta
+----------------
+
+mergeExerciseLibrary: de 15 standardövningarna kan bara döljas via hiddenExerciseIds, aldrig raderas permanent. Medvetet, för att standardbiblioteket ska vara konsekvent mellan synk-koder.
+
+Musik i biblioteket kan tas bort permanent via removedMusicUrls, till skillnad från övningar.
+
+Synk-koder är helt isolerade rum, ingen delning mellan koder alls, varken bibliotek eller program. Diskuterat men inte byggt: ett separat delat bibliotekslager ovanpå personliga program.
+
+Deploy sker automatiskt via Vercel vid varje push till main.
